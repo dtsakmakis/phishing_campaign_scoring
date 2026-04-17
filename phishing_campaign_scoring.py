@@ -5,14 +5,14 @@ import sys
 import html
 import logging
 from difflib import SequenceMatcher
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime
 
 """
 Phishing Campaign Scoring Tool
 ==============================
 
-Version   : v1.5
+Version   : v1.6
 Status    : Stable
 Date      : 2026-04-17
 
@@ -20,7 +20,7 @@ Purpose:
 --------
 Batch analysis of phishing emails to identify probable phishing campaigns
 using graph-based clustering on normalized subject lines, enriched with
-sender, sender domain, and sender IP correlation.
+sender, sender domain, sender IP, and analyst-provided classification.
 
 CSV format expected:
 --------------------
@@ -28,6 +28,14 @@ The script always parses the CSV by column position:
 - Column 1 = subject
 - Column 2 = sender address
 - Column 3 = sender IP
+- Column 4 = analyst classification
+
+Header names are ignored.
+
+Example accepted first row:
+- EOC Phish EmailSubject,EOC Email From,EOC Sender IP,Classification
+- EmailSubject,EmailFrom,SenderIP,Classification
+- 1,2,3,4
 """
 
 # =========================
@@ -41,7 +49,9 @@ parser = argparse.ArgumentParser(
         "  The script always parses the CSV by column position.\n"
         "  Column 1 = subject\n"
         "  Column 2 = sender address\n"
-        "  Column 3 = sender IP\n\n"
+        "  Column 3 = sender IP\n"
+        "  Column 4 = analyst classification\n\n"
+        "  Header names are ignored."
     ),
     formatter_class=argparse.RawTextHelpFormatter
 )
@@ -59,6 +69,8 @@ parser.add_argument("--export-html", nargs="?", const="AUTO", metavar="FILE",
                     help="Export results to an HTML report (optional filename)")
 parser.add_argument("--debug", action="store_true",
                     help="Enable verbose debug logging")
+parser.add_argument("--min-campaign-size", type=int, default=3,
+                    help="Minimum cluster size to classify as a campaign (default: 3)")
 
 args = parser.parse_args()
 INPUT_CSV = args.input_csv
@@ -117,6 +129,17 @@ def normalize_subject(s):
 
 def similarity(a, b):
     return SequenceMatcher(None, a, b).ratio()
+
+def normalize_sender(sender):
+    if not sender:
+        return ""
+
+    sender = sender.strip().lower()
+    match = re.search(r'<?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})>?', sender)
+    if match:
+        return match.group(1)
+
+    return sender
 
 def extract_sender_domain(sender):
     if not sender or "@" not in sender:
@@ -186,18 +209,25 @@ def should_link(a, b):
             )
         return True
 
-    if subj_sim >= SUBJECT_SIM_MEDIUM and (same_sender or same_domain or same_ip):
+    # More conservative use of IP-only corroboration
+    if subj_sim >= SUBJECT_SIM_MEDIUM and (same_sender or same_domain):
         if args.debug:
             reasons = []
             if same_sender:
                 reasons.append("same_sender")
             if same_domain:
                 reasons.append("same_domain")
-            if same_ip:
-                reasons.append("same_ip")
             log.debug(
                 "Corroborated link: subj_sim=%.3f | reasons=%s | '%s' <-> '%s'",
                 subj_sim, ",".join(reasons), a["raw_subject"], b["raw_subject"]
+            )
+        return True
+
+    if subj_sim >= SUBJECT_SIM_STRONG and same_ip:
+        if args.debug:
+            log.debug(
+                "IP-supported strong link: subj_sim=%.3f | '%s' <-> '%s'",
+                subj_sim, a["raw_subject"], b["raw_subject"]
             )
         return True
 
@@ -210,7 +240,7 @@ def should_link(a, b):
 emails = []
 
 try:
-    with open(INPUT_CSV, newline="", encoding="utf-8", errors="ignore") as f:
+    with open(INPUT_CSV, newline="", encoding="utf-8-sig", errors="ignore") as f:
         reader = csv.reader(f)
 
         header = next(reader, None)
@@ -218,22 +248,28 @@ try:
             print("\n❌ Error: CSV appears to be empty.")
             sys.exit(1)
 
-        if len(header) < 3:
-            print("\n❌ Error: CSV must contain at least 3 columns.")
+        if len(header) < 4:
+            print("\n❌ Error: CSV must contain at least 4 columns.")
+            print("Expected order:")
+            print("  column 1 = subject")
+            print("  column 2 = sender address")
+            print("  column 3 = sender IP")
+            print("  column 4 = classification")
             sys.exit(1)
 
         log.info("Using positional CSV parsing")
-        log.info("Column 1 -> subject | Column 2 -> sender | Column 3 -> ip")
+        log.info("Column 1 -> subject | Column 2 -> sender | Column 3 -> ip | Column 4 -> classification")
         log.debug("Detected header row (ignored for mapping): %s", header)
 
         for row_num, row in enumerate(reader, start=2):
-            if len(row) < 3:
+            if len(row) < 4:
                 log.debug("Skipping short row %d: %s", row_num, row)
                 continue
 
             subject = (row[0] or "").strip()
-            sender = (row[1] or "").strip().lower()
+            sender = normalize_sender(row[1] or "")
             ip = (row[2] or "").strip()
+            classification = (row[3] or "").strip()
             sender_domain = extract_sender_domain(sender)
 
             emails.append({
@@ -242,6 +278,7 @@ try:
                 "sender": sender,
                 "sender_domain": sender_domain,
                 "ip": ip,
+                "classification": classification,
                 "row_num": row_num,
             })
 
@@ -338,9 +375,10 @@ for i in range(n):
         component.append(emails[cur])
         stack.extend(adj[cur] - visited)
 
+    component.sort(key=lambda x: (x["sender"], x["raw_subject"], x["ip"], x["classification"]))
     clusters.append(component)
 
-campaigns = [c for c in clusters if len(c) >= 3]
+campaigns = [c for c in clusters if len(c) >= args.min_campaign_size]
 pairs = [c for c in clusters if len(c) == 2]
 singletons = [c[0] for c in clusters if len(c) == 1]
 
@@ -355,15 +393,33 @@ def summarize_cluster(cluster, cluster_id):
     scores = [e["signal_score"] for e in cluster if e["signal_score"] > 0]
     avg_score = round(sum(scores) / len(scores), 3) if scores else 0.0
 
+    classifications = [e["classification"] for e in cluster if e["classification"]]
+    class_counter = Counter(classifications)
+
+    if class_counter:
+        dominant_classification, dominant_count = class_counter.most_common(1)[0]
+        classification_consistency = f"{dominant_count}/{len(cluster)}"
+    else:
+        dominant_classification = "[empty]"
+        dominant_count = 0
+        classification_consistency = f"0/{len(cluster)}"
+
+    subject_counter = Counter(e["raw_subject"] for e in cluster if e["raw_subject"])
+    subject_sample = subject_counter.most_common(1)[0][0] if subject_counter else cluster[0]["raw_subject"]
+
     return {
         "cluster_id": cluster_id,
-        "subject_sample": cluster[0]["raw_subject"],
+        "subject_sample": subject_sample,
         "email_count": len(cluster),
         "avg_score": avg_score,
         "confidence": confidence_band(avg_score),
         "unique_senders": len(set(e["sender"] for e in cluster if e["sender"])),
         "unique_domains": len(set(e["sender_domain"] for e in cluster if e["sender_domain"])),
         "unique_ips": len(set(e["ip"] for e in cluster if e["ip"])),
+        "campaign_classification": dominant_classification,
+        "classification_consistency": classification_consistency,
+        "unique_classifications": len(class_counter),
+        "classification_breakdown": dict(class_counter),
         "emails": cluster,
     }
 
@@ -379,7 +435,7 @@ for idx, c in enumerate(sorted(pairs, key=len, reverse=True), 1):
 
 print("\n✅ Phishing Campaign Evaluation (30-day snapshot)\n")
 print(f"Total emails analyzed         : {len(emails)}")
-print(f"Campaigns (≥3 emails)         : {len(campaign_results)}")
+print(f"Campaigns (>={args.min_campaign_size} emails)      : {len(campaign_results)}")
 print(f"Suspicious pairs (2 emails)   : {len(pair_results)}")
 print(f"Singleton emails (isolated)   : {len(singletons)}\n")
 
@@ -387,13 +443,19 @@ if campaign_results:
     print("=== Campaigns ===\n")
     for c in campaign_results:
         print(f"{c['cluster_id']}")
-        print(f"  Emails          : {c['email_count']}")
-        print(f"  Avg signal score: {c['avg_score']}")
-        print(f"  Confidence      : {c['confidence']}")
-        print(f"  Unique senders  : {c['unique_senders']}")
-        print(f"  Unique domains  : {c['unique_domains']}")
-        print(f"  Unique IPs      : {c['unique_ips']}")
-        print(f"  Subject sample  : {c['subject_sample']}\n")
+        print(f"  Emails               : {c['email_count']}")
+        print(f"  Avg signal score     : {c['avg_score']}")
+        print(f"  Confidence           : {c['confidence']}")
+        print(f"  Unique senders       : {c['unique_senders']}")
+        print(f"  Unique domains       : {c['unique_domains']}")
+        print(f"  Unique IPs           : {c['unique_ips']}")
+        print(f"  Subject sample       : {c['subject_sample']}")
+        print(f"  Classification       : {c['campaign_classification']}")
+        print(f"  Class consistency    : {c['classification_consistency']}")
+        print(f"  Unique classifications: {c['unique_classifications']}")
+        if c["unique_classifications"] > 1:
+            print("  Warning              : Mixed analyst classifications inside cluster")
+        print()
 
         if not args.summary_only:
             print("  Emails in this campaign:")
@@ -403,19 +465,26 @@ if campaign_results:
                 print(f"      Sender  : {e['sender'] or '[empty]'}")
                 print(f"      Domain  : {e['sender_domain'] or '[empty]'}")
                 print(f"      IP      : {e['ip'] or '[empty]'}")
+                print(f"      Class   : {e['classification'] or '[empty]'}")
                 print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
 if args.include_pairs and pair_results:
     print("\n=== Suspicious Pairs (2 emails) ===\n")
     for c in pair_results:
         print(f"{c['cluster_id']}")
-        print(f"  Emails          : {c['email_count']}")
-        print(f"  Avg signal score: {c['avg_score']}")
-        print(f"  Confidence      : {c['confidence']}")
-        print(f"  Unique senders  : {c['unique_senders']}")
-        print(f"  Unique domains  : {c['unique_domains']}")
-        print(f"  Unique IPs      : {c['unique_ips']}")
-        print(f"  Subject sample  : {c['subject_sample']}\n")
+        print(f"  Emails               : {c['email_count']}")
+        print(f"  Avg signal score     : {c['avg_score']}")
+        print(f"  Confidence           : {c['confidence']}")
+        print(f"  Unique senders       : {c['unique_senders']}")
+        print(f"  Unique domains       : {c['unique_domains']}")
+        print(f"  Unique IPs           : {c['unique_ips']}")
+        print(f"  Subject sample       : {c['subject_sample']}")
+        print(f"  Classification       : {c['campaign_classification']}")
+        print(f"  Class consistency    : {c['classification_consistency']}")
+        print(f"  Unique classifications: {c['unique_classifications']}")
+        if c["unique_classifications"] > 1:
+            print("  Warning              : Mixed analyst classifications inside cluster")
+        print()
 
         if not args.summary_only:
             print("  Emails in this pair:")
@@ -425,6 +494,7 @@ if args.include_pairs and pair_results:
                 print(f"      Sender  : {e['sender'] or '[empty]'}")
                 print(f"      Domain  : {e['sender_domain'] or '[empty]'}")
                 print(f"      IP      : {e['ip'] or '[empty]'}")
+                print(f"      Class   : {e['classification'] or '[empty]'}")
                 print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
 if args.include_singletons and singletons:
@@ -436,6 +506,7 @@ if args.include_singletons and singletons:
         print(f"  Sender  : {e['sender'] or '[empty]'}")
         print(f"  Domain  : {e['sender_domain'] or '[empty]'}")
         print(f"  IP      : {e['ip'] or '[empty]'}")
+        print(f"  Class   : {e['classification'] or '[empty]'}")
         print(f"  Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
 # =========================
@@ -468,6 +539,7 @@ th {{ background:#f0f0f0; }}
 .medhigh {{ background:#f57c00; color:#fff; }}
 .medium {{ background:#fbc02d; color:#000; }}
 .low {{ background:#388e3c; color:#fff; }}
+.warning {{ color:#b71c1c; font-weight:bold; }}
 </style>
 </head>
 <body>
@@ -478,7 +550,7 @@ th {{ background:#f0f0f0; }}
 <h2>Summary</h2>
 <ul>
 <li>Total emails analyzed: {len(emails)}</li>
-<li>Campaigns (≥3 emails): {len(campaign_results)}</li>
+<li>Campaigns (>={args.min_campaign_size} emails): {len(campaign_results)}</li>
 <li>Suspicious pairs (2 emails): {len(pair_results)}</li>
 <li>Singleton emails: {len(singletons)}</li>
 </ul>
@@ -492,6 +564,8 @@ th {{ background:#f0f0f0; }}
 <th>Unique Senders</th>
 <th>Unique Domains</th>
 <th>Unique IPs</th>
+<th>Classification</th>
+<th>Class Consistency</th>
 <th>Subject</th>
 </tr>
 """
@@ -505,7 +579,15 @@ th {{ background:#f0f0f0; }}
 <td>{c['unique_senders']}</td>
 <td>{c['unique_domains']}</td>
 <td>{c['unique_ips']}</td>
+<td>{h(c['campaign_classification'])}</td>
+<td>{h(c['classification_consistency'])}</td>
 <td>{h(c['subject_sample'])}</td>
+</tr>
+"""
+        if c["unique_classifications"] > 1:
+            html_report += f"""
+<tr>
+<td colspan="9" class="warning">Warning: Mixed analyst classifications inside cluster</td>
 </tr>
 """
 
@@ -522,6 +604,8 @@ th {{ background:#f0f0f0; }}
 <th>Unique Senders</th>
 <th>Unique Domains</th>
 <th>Unique IPs</th>
+<th>Classification</th>
+<th>Class Consistency</th>
 <th>Subject</th>
 </tr>
 """
@@ -534,7 +618,15 @@ th {{ background:#f0f0f0; }}
 <td>{c['unique_senders']}</td>
 <td>{c['unique_domains']}</td>
 <td>{c['unique_ips']}</td>
+<td>{h(c['campaign_classification'])}</td>
+<td>{h(c['classification_consistency'])}</td>
 <td>{h(c['subject_sample'])}</td>
+</tr>
+"""
+            if c["unique_classifications"] > 1:
+                html_report += """
+<tr>
+<td colspan="9" class="warning">Warning: Mixed analyst classifications inside cluster</td>
 </tr>
 """
         html_report += "</table>"
@@ -543,7 +635,7 @@ th {{ background:#f0f0f0; }}
         html_report += """
 <h2>Singleton Emails (isolated activity)</h2>
 <table>
-<tr><th>Row</th><th>Subject</th><th>Sender</th><th>Domain</th><th>IP</th><th>Score</th></tr>
+<tr><th>Row</th><th>Subject</th><th>Sender</th><th>Domain</th><th>IP</th><th>Classification</th><th>Score</th></tr>
 """
         for e in singletons:
             html_report += f"""
@@ -553,6 +645,7 @@ th {{ background:#f0f0f0; }}
 <td>{h(e['sender'] or '[empty]')}</td>
 <td>{h(e['sender_domain'] or '[empty]')}</td>
 <td>{h(e['ip'] or '[empty]')}</td>
+<td>{h(e['classification'] or '[empty]')}</td>
 <td>{h(f"{e['signal_score']} ({e['signal_confidence']})")}</td>
 </tr>
 """
@@ -584,7 +677,10 @@ if args.export_csv:
                 "confidence",
                 "unique_senders",
                 "unique_domains",
-                "unique_ips"
+                "unique_ips",
+                "campaign_classification",
+                "classification_consistency",
+                "unique_classifications",
             ]
         )
         writer.writeheader()
@@ -600,6 +696,9 @@ if args.export_csv:
                 "unique_senders": c["unique_senders"],
                 "unique_domains": c["unique_domains"],
                 "unique_ips": c["unique_ips"],
+                "campaign_classification": c["campaign_classification"],
+                "classification_consistency": c["classification_consistency"],
+                "unique_classifications": c["unique_classifications"],
             })
 
         for c in pair_results:
@@ -613,6 +712,9 @@ if args.export_csv:
                 "unique_senders": c["unique_senders"],
                 "unique_domains": c["unique_domains"],
                 "unique_ips": c["unique_ips"],
+                "campaign_classification": c["campaign_classification"],
+                "classification_consistency": c["classification_consistency"],
+                "unique_classifications": c["unique_classifications"],
             })
 
     print(f"\n✅ Cluster summary exported to {output_file}")
