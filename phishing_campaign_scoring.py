@@ -12,7 +12,7 @@ from datetime import datetime
 Phishing Campaign Scoring Tool
 ==============================
 
-Version   : v1.4
+Version   : v1.4.1
 Status    : Stable
 Date      : 2026-04-17
 
@@ -21,6 +21,40 @@ Purpose:
 Batch analysis of phishing emails to identify probable phishing campaigns
 using graph-based clustering on normalized subject lines, enriched with
 sender, sender domain, and sender IP correlation.
+
+Supported CSV input modes:
+--------------------------
+1. Header-based mode (default)
+   The script auto-detects columns by header name.
+
+   Accepted subject headers:
+   - EOC Phish EmailSubject
+   - EmailSubject
+   - Email Subject
+   - Subject
+
+   Accepted sender headers:
+   - EOC Email From
+   - Email From
+   - From
+   - Sender
+
+   Accepted IP headers:
+   - EOC Sender IP
+   - Sender IP
+   - IP
+   - Source IP
+
+2. Positional mode (--positional)
+   The script ignores header names and assumes:
+   - Column 1 = subject
+   - Column 2 = sender address
+   - Column 3 = sender IP
+
+   Example valid header row in positional mode:
+   - EOC Phish EmailSubject,EOC Email From,EOC Sender IP
+   - EmailSubject,EmailFrom,SenderIP
+   - 1,2,3
 
 Key Properties:
 ---------------
@@ -31,13 +65,6 @@ Key Properties:
 - SOC / IR friendly
 - Offline-safe
 - Audit-ready
-
-v1.4 Improvements:
-------------------
-- Added column auto-detection with aliases
-- Added debug logging (--debug)
-- Preserved full v1.3 functionality
-- Better error visibility and CSV schema handling
 """
 
 # =========================
@@ -45,22 +72,77 @@ v1.4 Improvements:
 # =========================
 
 parser = argparse.ArgumentParser(
-    description="Cluster and score phishing emails from an XSOAR CSV export (30-day snapshot)"
+    description=(
+        "Cluster phishing emails from CSV into probable campaigns.\n\n"
+        "CSV format expected:\n"
+        "  Default mode: header-based auto-detection.\n"
+        "    Accepted subject headers: EOC Phish EmailSubject | EmailSubject | Email Subject | Subject\n"
+        "    Accepted sender headers : EOC Email From | Email From | From | Sender\n"
+        "    Accepted IP headers     : EOC Sender IP | Sender IP | IP | Source IP\n\n"
+        "  Positional mode (--positional):\n"
+        "    Column 1 = subject\n"
+        "    Column 2 = sender address\n"
+        "    Column 3 = sender IP\n"
+        "    Header names are ignored in this mode, so even '1,2,3' will work."
+    ),
+    formatter_class=argparse.RawTextHelpFormatter
 )
 
-parser.add_argument("input_csv", help="Path to the phishing email CSV export")
-parser.add_argument("--summary-only", action="store_true",
-                    help="Print cluster summary only (no per-email details)")
-parser.add_argument("--export-csv", nargs="?", const="AUTO", metavar="FILE",
-                    help="Export cluster summary to CSV (optional filename)")
-parser.add_argument("--include-singletons", action="store_true",
-                    help="Include singleton (1-email) clusters in the output")
-parser.add_argument("--include-pairs", action="store_true",
-                    help="Include 2-email suspicious clusters in the output")
-parser.add_argument("--export-html", nargs="?", const="AUTO", metavar="FILE",
-                    help="Export results to an HTML report (optional filename)")
-parser.add_argument("--debug", action="store_true",
-                    help="Enable verbose debug logging")
+parser.add_argument(
+    "input_csv",
+    help="Path to the phishing email CSV export"
+)
+
+parser.add_argument(
+    "--summary-only",
+    action="store_true",
+    help="Print cluster summary only (no per-email details)"
+)
+
+parser.add_argument(
+    "--export-csv",
+    nargs="?",
+    const="AUTO",
+    metavar="FILE",
+    help="Export cluster summary to CSV (optional filename)"
+)
+
+parser.add_argument(
+    "--include-singletons",
+    action="store_true",
+    help="Include singleton (1-email) clusters in console output"
+)
+
+parser.add_argument(
+    "--include-pairs",
+    action="store_true",
+    help="Include suspicious 2-email clusters in console output"
+)
+
+parser.add_argument(
+    "--export-html",
+    nargs="?",
+    const="AUTO",
+    metavar="FILE",
+    help="Export results to an HTML report (optional filename)"
+)
+
+parser.add_argument(
+    "--debug",
+    action="store_true",
+    help="Enable verbose debug logging"
+)
+
+parser.add_argument(
+    "--positional",
+    action="store_true",
+    help=(
+        "Parse CSV by position instead of header names:\n"
+        "  column 1 = subject\n"
+        "  column 2 = sender address\n"
+        "  column 3 = sender IP"
+    )
+)
 
 args = parser.parse_args()
 INPUT_CSV = args.input_csv
@@ -218,8 +300,10 @@ def should_link(a, b):
 
     if subj_sim >= SUBJECT_SIM_STRONG:
         if args.debug:
-            log.debug("Strong link: subj_sim=%.3f | '%s' <-> '%s'",
-                      subj_sim, a["raw_subject"], b["raw_subject"])
+            log.debug(
+                "Strong link: subj_sim=%.3f | '%s' <-> '%s'",
+                subj_sim, a["raw_subject"], b["raw_subject"]
+            )
         return True
 
     if subj_sim >= SUBJECT_SIM_MEDIUM and (same_sender or same_domain or same_ip):
@@ -231,8 +315,10 @@ def should_link(a, b):
                 reasons.append("same_domain")
             if same_ip:
                 reasons.append("same_ip")
-            log.debug("Corroborated link: subj_sim=%.3f | reasons=%s | '%s' <-> '%s'",
-                      subj_sim, ",".join(reasons), a["raw_subject"], b["raw_subject"])
+            log.debug(
+                "Corroborated link: subj_sim=%.3f | reasons=%s | '%s' <-> '%s'",
+                subj_sim, ",".join(reasons), a["raw_subject"], b["raw_subject"]
+            )
         return True
 
     return False
@@ -245,46 +331,87 @@ emails = []
 
 try:
     with open(INPUT_CSV, newline="", encoding="utf-8", errors="ignore") as f:
-        reader = csv.DictReader(f)
+        if args.positional:
+            reader = csv.reader(f)
 
-        if not reader.fieldnames:
-            print("\n❌ Error: CSV appears to be empty or malformed.")
-            sys.exit(1)
+            header = next(reader, None)
+            if not header:
+                print("\n❌ Error: CSV appears to be empty.")
+                sys.exit(1)
 
-        log.debug("Detected CSV columns: %s", reader.fieldnames)
+            if len(header) < 3:
+                print("\n❌ Error: CSV must contain at least 3 columns in positional mode.")
+                sys.exit(1)
 
-        subject_col = resolve_column(reader.fieldnames, COLUMN_ALIASES["subject"], "subject")
-        sender_col = resolve_column(reader.fieldnames, COLUMN_ALIASES["sender"], "sender")
-        ip_col = resolve_column(reader.fieldnames, COLUMN_ALIASES["ip"], "ip")
+            log.info("Using position-based CSV parsing")
+            log.info("Column 1 -> subject | Column 2 -> sender | Column 3 -> ip")
+            log.debug("Detected header row: %s", header)
 
-        if not subject_col or not sender_col or not ip_col:
-            print("\n❌ Error: could not resolve required columns.")
-            print("\nExpected aliases:")
-            print(f"  Subject: {COLUMN_ALIASES['subject']}")
-            print(f"  Sender : {COLUMN_ALIASES['sender']}")
-            print(f"  IP     : {COLUMN_ALIASES['ip']}")
-            print("\nAvailable columns:")
-            for col in reader.fieldnames:
-                print(f"  - {col}")
-            sys.exit(1)
+            for row_num, row in enumerate(reader, start=2):
+                if len(row) < 3:
+                    log.debug("Skipping short row %d: %s", row_num, row)
+                    continue
 
-        log.info("Using columns -> subject: '%s' | sender: '%s' | ip: '%s'",
-                 subject_col, sender_col, ip_col)
+                subject = (row[0] or "").strip()
+                sender = (row[1] or "").strip().lower()
+                ip = (row[2] or "").strip()
+                sender_domain = extract_sender_domain(sender)
 
-        for row_num, row in enumerate(reader, start=2):
-            subject = (row.get(subject_col) or "").strip()
-            sender = (row.get(sender_col) or "").strip().lower()
-            ip = (row.get(ip_col) or "").strip()
-            sender_domain = extract_sender_domain(sender)
+                emails.append({
+                    "raw_subject": subject,
+                    "norm_subject": normalize_subject(subject),
+                    "sender": sender,
+                    "sender_domain": sender_domain,
+                    "ip": ip,
+                    "row_num": row_num,
+                })
+        else:
+            reader = csv.DictReader(f)
 
-            emails.append({
-                "raw_subject": subject,
-                "norm_subject": normalize_subject(subject),
-                "sender": sender,
-                "sender_domain": sender_domain,
-                "ip": ip,
-                "row_num": row_num,
-            })
+            if not reader.fieldnames:
+                print("\n❌ Error: CSV appears to be empty or malformed.")
+                sys.exit(1)
+
+            log.debug("Detected CSV columns: %s", reader.fieldnames)
+
+            subject_col = resolve_column(reader.fieldnames, COLUMN_ALIASES["subject"], "subject")
+            sender_col = resolve_column(reader.fieldnames, COLUMN_ALIASES["sender"], "sender")
+            ip_col = resolve_column(reader.fieldnames, COLUMN_ALIASES["ip"], "ip")
+
+            if not subject_col or not sender_col or not ip_col:
+                print("\n❌ Error: could not resolve required columns.")
+                print("\nExpected aliases:")
+                print(f"  Subject: {COLUMN_ALIASES['subject']}")
+                print(f"  Sender : {COLUMN_ALIASES['sender']}")
+                print(f"  IP     : {COLUMN_ALIASES['ip']}")
+                print("\nAvailable columns:")
+                for col in reader.fieldnames:
+                    print(f"  - {col}")
+                print("\nTip: use --positional if your CSV always has:")
+                print("  column 1 = subject")
+                print("  column 2 = sender")
+                print("  column 3 = sender IP")
+                sys.exit(1)
+
+            log.info(
+                "Using columns -> subject: '%s' | sender: '%s' | ip: '%s'",
+                subject_col, sender_col, ip_col
+            )
+
+            for row_num, row in enumerate(reader, start=2):
+                subject = (row.get(subject_col) or "").strip()
+                sender = (row.get(sender_col) or "").strip().lower()
+                ip = (row.get(ip_col) or "").strip()
+                sender_domain = extract_sender_domain(sender)
+
+                emails.append({
+                    "raw_subject": subject,
+                    "norm_subject": normalize_subject(subject),
+                    "sender": sender,
+                    "sender_domain": sender_domain,
+                    "ip": ip,
+                    "row_num": row_num,
+                })
 
 except FileNotFoundError:
     print(f"\n❌ Error: file not found: {INPUT_CSV}")
@@ -468,10 +595,6 @@ if args.include_pairs and pair_results:
                 print(f"      IP      : {e['ip'] or '[empty]'}")
                 print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
-# =========================
-# Singleton output (optional)
-# =========================
-
 if args.include_singletons and singletons:
     print("\n=== Singleton Emails (isolated activity) ===\n")
     for idx, e in enumerate(singletons, 1):
@@ -513,7 +636,6 @@ th {{ background:#f0f0f0; }}
 .medhigh {{ background:#f57c00; color:#fff; }}
 .medium {{ background:#fbc02d; color:#000; }}
 .low {{ background:#388e3c; color:#fff; }}
-.small {{ font-size: 0.92em; color:#333; }}
 </style>
 </head>
 <body>
