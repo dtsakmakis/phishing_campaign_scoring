@@ -28,11 +28,6 @@ The script always parses the CSV by column position:
 - Column 1 = subject
 - Column 2 = sender address
 - Column 3 = sender IP
-
-Header names are ignored, so all of the following work:
-- EOC Phish EmailSubject,EOC Email From,EOC Sender IP
-- EmailSubject,EmailFrom,SenderIP
-- 1,2,3
 """
 
 # =========================
@@ -47,10 +42,6 @@ parser = argparse.ArgumentParser(
         "  Column 1 = subject\n"
         "  Column 2 = sender address\n"
         "  Column 3 = sender IP\n\n"
-        "  Header names are ignored, so all of the following work:\n"
-        "    EOC Phish EmailSubject,EOC Email From,EOC Sender IP\n"
-        "    EmailSubject,EmailFrom,SenderIP\n"
-        "    1,2,3"
     ),
     formatter_class=argparse.RawTextHelpFormatter
 )
