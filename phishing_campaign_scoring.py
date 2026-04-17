@@ -3,6 +3,7 @@ import re
 import argparse
 import sys
 import os
+import html
 from difflib import SequenceMatcher
 from collections import defaultdict
 from datetime import datetime
@@ -11,14 +12,15 @@ from datetime import datetime
 Phishing Campaign Scoring Tool
 ==============================
 
-Version   : v1.2 (Stable)
-Status    : Locked
-Date      : 2026-04-16
+Version   : v1.3
+Status    : Stable
+Date      : 2026-04-17
 
 Purpose:
 --------
-Batch analysis of phishing emails to identify campaigns using
-high-accuracy, graph-based clustering on normalized subject lines.
+Batch analysis of phishing emails to identify probable phishing campaigns
+using graph-based clustering on normalized subject lines, enriched with
+sender, sender domain, and sender IP correlation.
 
 Key Properties:
 ---------------
@@ -30,13 +32,17 @@ Key Properties:
 - Offline-safe
 - Audit-ready
 
-Change Summary (v1.2):
----------------------
-- Added Singleton Emails section to HTML report
-
-Change Policy:
---------------
-Any further functional or analytical change requires v1.3+
+v1.3 Improvements:
+------------------
+- Added safeguards for empty subjects
+- Added HTML escaping for report safety
+- Added sender domain extraction
+- Reworked clustering logic to use pairwise correlation:
+    subject similarity + sender/domain/IP corroboration
+- Changed campaign threshold from >=2 to >=3
+- Added explicit "pair" clusters (2 emails)
+- Added CSV schema validation
+- Renamed email_score -> signal_score for accuracy
 """
 
 # =========================
@@ -49,11 +55,13 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument("input_csv", help="Path to the XSOAR phishing email CSV export")
 parser.add_argument("--summary-only", action="store_true",
-                    help="Print campaign summary only (no per-email details)")
+                    help="Print cluster summary only (no per-email details)")
 parser.add_argument("--export-csv", nargs="?", const="AUTO", metavar="FILE",
                     help="Export campaign summary to CSV (optional filename)")
 parser.add_argument("--include-singletons", action="store_true",
                     help="Include singleton (1-email) clusters in the output")
+parser.add_argument("--include-pairs", action="store_true",
+                    help="Include 2-email suspicious clusters in the output")
 parser.add_argument("--export-html", nargs="?", const="AUTO", metavar="FILE",
                     help="Export results to an HTML report (optional filename)")
 
@@ -64,13 +72,22 @@ INPUT_CSV = args.input_csv
 # Configuration
 # =========================
 
-SIMILARITY_THRESHOLD = 0.85
+SUBJECT_SIM_STRONG = 0.92
+SUBJECT_SIM_MEDIUM = 0.85
+MIN_SUBJECT_LEN = 8
 
 WEIGHTS = {
     "subject": 0.50,
-    "sender": 0.30,
-    "ip": 0.20,
+    "sender": 0.25,
+    "domain": 0.15,
+    "ip": 0.10,
 }
+
+REQUIRED_COLUMNS = [
+    "EOC Phish EmailSubject",
+    "EOC Email From",
+    "EOC Sender IP",
+]
 
 # =========================
 # Normalization helpers
@@ -86,7 +103,7 @@ def normalize_subject(s):
         s = s.split(":", 1)[1].strip()
 
     if s.startswith("phishing:"):
-        s = s.replace("phishing:", "", 1)
+        s = s.replace("phishing:", "", 1).strip()
 
     s = re.sub(r'\b[a-f0-9]{8,}\b', '', s)
     s = re.sub(r'#\w+', '', s)
@@ -102,6 +119,11 @@ def normalize_subject(s):
 def similarity(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
+def extract_sender_domain(sender):
+    if not sender or "@" not in sender:
+        return ""
+    return sender.split("@", 1)[1].strip().lower()
+
 # =========================
 # Scoring helpers
 # =========================
@@ -111,9 +133,11 @@ def frequency_score(count):
         return 1.0
     elif count >= 5:
         return 0.8
-    elif count >= 2:
+    elif count >= 3:
         return 0.6
-    return 0.3
+    elif count >= 2:
+        return 0.4
+    return 0.2
 
 def confidence_band(score):
     if score >= 0.80:
@@ -132,6 +156,44 @@ def auto_csv_filename():
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"phishing_campaign_summary_{ts}.csv"
 
+def h(value):
+    return html.escape(str(value), quote=True)
+
+# =========================
+# Pairwise clustering logic
+# =========================
+
+def should_link(a, b):
+    """
+    Link rules:
+    1. Ignore if either normalized subject is empty
+    2. Ignore very short subjects to reduce noisy matches
+    3. Link if subject similarity is very high
+    4. Or link if similarity is moderate AND corroborated by sender/domain/IP
+    """
+    subj_a = a["norm_subject"]
+    subj_b = b["norm_subject"]
+
+    if not subj_a or not subj_b:
+        return False
+
+    if len(subj_a) < MIN_SUBJECT_LEN or len(subj_b) < MIN_SUBJECT_LEN:
+        return False
+
+    subj_sim = similarity(subj_a, subj_b)
+
+    same_sender = bool(a["sender"] and b["sender"] and a["sender"] == b["sender"])
+    same_domain = bool(a["sender_domain"] and b["sender_domain"] and a["sender_domain"] == b["sender_domain"])
+    same_ip = bool(a["ip"] and b["ip"] and a["ip"] == b["ip"])
+
+    if subj_sim >= SUBJECT_SIM_STRONG:
+        return True
+
+    if subj_sim >= SUBJECT_SIM_MEDIUM and (same_sender or same_domain or same_ip):
+        return True
+
+    return False
+
 # =========================
 # Load CSV data
 # =========================
@@ -141,17 +203,35 @@ emails = []
 try:
     with open(INPUT_CSV, newline="", encoding="utf-8", errors="ignore") as f:
         reader = csv.DictReader(f)
+
+        if not reader.fieldnames:
+            print("\n❌ Error: CSV appears to be empty or malformed.")
+            sys.exit(1)
+
+        missing = [c for c in REQUIRED_COLUMNS if c not in reader.fieldnames]
+        if missing:
+            print("\n❌ Error: missing required column(s):")
+            for col in missing:
+                print(f"   - {col}")
+            print("\nAvailable columns:")
+            for col in reader.fieldnames:
+                print(f"   - {col}")
+            sys.exit(1)
+
         for row in reader:
             subject = (row.get("EOC Phish EmailSubject") or "").strip()
             sender = (row.get("EOC Email From") or "").strip().lower()
             ip = (row.get("EOC Sender IP") or "").strip()
+            sender_domain = extract_sender_domain(sender)
 
             emails.append({
                 "raw_subject": subject,
                 "norm_subject": normalize_subject(subject),
                 "sender": sender,
-                "ip": ip
+                "sender_domain": sender_domain,
+                "ip": ip,
             })
+
 except FileNotFoundError:
     print(f"\n❌ Error: file not found: {INPUT_CSV}")
     sys.exit(1)
@@ -162,6 +242,7 @@ except FileNotFoundError:
 
 subject_counts = defaultdict(int)
 sender_counts = defaultdict(int)
+domain_counts = defaultdict(int)
 ip_counts = defaultdict(int)
 
 for e in emails:
@@ -169,11 +250,13 @@ for e in emails:
         subject_counts[e["norm_subject"]] += 1
     if e["sender"]:
         sender_counts[e["sender"]] += 1
+    if e["sender_domain"]:
+        domain_counts[e["sender_domain"]] += 1
     if e["ip"]:
         ip_counts[e["ip"]] += 1
 
 # =========================
-# Email-level scoring
+# Email-level signal scoring
 # =========================
 
 for e in emails:
@@ -188,12 +271,16 @@ for e in emails:
         score_sum += frequency_score(sender_counts[e["sender"]]) * WEIGHTS["sender"]
         weight_sum += WEIGHTS["sender"]
 
+    if e["sender_domain"]:
+        score_sum += frequency_score(domain_counts[e["sender_domain"]]) * WEIGHTS["domain"]
+        weight_sum += WEIGHTS["domain"]
+
     if e["ip"]:
         score_sum += frequency_score(ip_counts[e["ip"]]) * WEIGHTS["ip"]
         weight_sum += WEIGHTS["ip"]
 
-    e["email_score"] = round(score_sum / weight_sum, 3) if weight_sum else 0.0
-    e["email_confidence"] = confidence_band(e["email_score"])
+    e["signal_score"] = round(score_sum / weight_sum, 3) if weight_sum else 0.0
+    e["signal_confidence"] = confidence_band(e["signal_score"])
 
 # =========================
 # Graph-based clustering
@@ -204,7 +291,7 @@ adj = [set() for _ in range(n)]
 
 for i in range(n):
     for j in range(i + 1, n):
-        if similarity(emails[i]["norm_subject"], emails[j]["norm_subject"]) >= SIMILARITY_THRESHOLD:
+        if should_link(emails[i], emails[j]):
             adj[i].add(j)
             adj[j].add(i)
 
@@ -228,71 +315,109 @@ for i in range(n):
 
     clusters.append(component)
 
-campaigns = [c for c in clusters if len(c) >= 2]
+campaigns = [c for c in clusters if len(c) >= 3]
+pairs = [c for c in clusters if len(c) == 2]
 singletons = [c[0] for c in clusters if len(c) == 1]
 
 # =========================
-# Campaign aggregation
+# Cluster aggregation
 # =========================
 
 campaign_results = []
+pair_results = []
 
-for idx, c in enumerate(sorted(campaigns, key=len, reverse=True), 1):
-    scores = [e["email_score"] for e in c if e["email_score"] > 0]
+def summarize_cluster(cluster, cluster_id):
+    scores = [e["signal_score"] for e in cluster if e["signal_score"] > 0]
     avg_score = round(sum(scores) / len(scores), 3) if scores else 0.0
 
-    campaign_results.append({
-        "campaign_id": f"C{idx:03}",
-        "subject_sample": c[0]["raw_subject"],
-        "email_count": len(c),
+    return {
+        "cluster_id": cluster_id,
+        "subject_sample": cluster[0]["raw_subject"],
+        "email_count": len(cluster),
         "avg_score": avg_score,
         "confidence": confidence_band(avg_score),
-        "unique_senders": len(set(e["sender"] for e in c if e["sender"])),
-        "unique_ips": len(set(e["ip"] for e in c if e["ip"])),
-        "emails": c
-    })
+        "unique_senders": len(set(e["sender"] for e in cluster if e["sender"])),
+        "unique_domains": len(set(e["sender_domain"] for e in cluster if e["sender_domain"])),
+        "unique_ips": len(set(e["ip"] for e in cluster if e["ip"])),
+        "emails": cluster,
+    }
+
+for idx, c in enumerate(sorted(campaigns, key=len, reverse=True), 1):
+    result = summarize_cluster(c, f"C{idx:03}")
+    campaign_results.append(result)
+
+for idx, c in enumerate(sorted(pairs, key=len, reverse=True), 1):
+    result = summarize_cluster(c, f"P{idx:03}")
+    pair_results.append(result)
 
 # =========================
 # Console output
 # =========================
 
 print("\n✅ Phishing Campaign Evaluation (30-day snapshot)\n")
-print(f"Total emails analyzed      : {len(emails)}")
-print(f"Campaigns (≥2 emails)      : {len(campaign_results)}")
-print(f"Singleton emails (isolated): {len(singletons)}\n")
+print(f"Total emails analyzed         : {len(emails)}")
+print(f"Campaigns (≥3 emails)         : {len(campaign_results)}")
+print(f"Suspicious pairs (2 emails)   : {len(pair_results)}")
+print(f"Singleton emails (isolated)   : {len(singletons)}\n")
 
-for c in campaign_results:
-    print(f"{c['campaign_id']}")
-    print(f"  Emails         : {c['email_count']}")
-    print(f"  Avg score      : {c['avg_score']}")
-    print(f"  Confidence     : {c['confidence']}")
-    print(f"  Unique senders : {c['unique_senders']}")
-    print(f"  Unique IPs     : {c['unique_ips']}")
-    print(f"  Subject sample : {c['subject_sample']}\n")
+if campaign_results:
+    print("=== Campaigns ===\n")
+    for c in campaign_results:
+        print(f"{c['cluster_id']}")
+        print(f"  Emails          : {c['email_count']}")
+        print(f"  Avg signal score: {c['avg_score']}")
+        print(f"  Confidence      : {c['confidence']}")
+        print(f"  Unique senders  : {c['unique_senders']}")
+        print(f"  Unique domains  : {c['unique_domains']}")
+        print(f"  Unique IPs      : {c['unique_ips']}")
+        print(f"  Subject sample  : {c['subject_sample']}\n")
 
-    if not args.summary_only:
-        print("  Emails in this campaign:")
-        for e in c["emails"]:
-            print(f"    - Subject : {e['raw_subject']}")
-            print(f"      Sender  : {e['sender'] or '[empty]'}")
-            print(f"      IP      : {e['ip'] or '[empty]'}")
-            print(f"      Score   : {e['email_score']} ({e['email_confidence']})\n")
+        if not args.summary_only:
+            print("  Emails in this campaign:")
+            for e in c["emails"]:
+                print(f"    - Subject : {e['raw_subject']}")
+                print(f"      Sender  : {e['sender'] or '[empty]'}")
+                print(f"      Domain  : {e['sender_domain'] or '[empty]'}")
+                print(f"      IP      : {e['ip'] or '[empty]'}")
+                print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
+
+if args.include_pairs and pair_results:
+    print("\n=== Suspicious Pairs (2 emails) ===\n")
+    for c in pair_results:
+        print(f"{c['cluster_id']}")
+        print(f"  Emails          : {c['email_count']}")
+        print(f"  Avg signal score: {c['avg_score']}")
+        print(f"  Confidence      : {c['confidence']}")
+        print(f"  Unique senders  : {c['unique_senders']}")
+        print(f"  Unique domains  : {c['unique_domains']}")
+        print(f"  Unique IPs      : {c['unique_ips']}")
+        print(f"  Subject sample  : {c['subject_sample']}\n")
+
+        if not args.summary_only:
+            print("  Emails in this pair:")
+            for e in c["emails"]:
+                print(f"    - Subject : {e['raw_subject']}")
+                print(f"      Sender  : {e['sender'] or '[empty]'}")
+                print(f"      Domain  : {e['sender_domain'] or '[empty]'}")
+                print(f"      IP      : {e['ip'] or '[empty]'}")
+                print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
 # =========================
 # Singleton output (optional)
 # =========================
 
 if args.include_singletons and singletons:
-    print("\n🧍 Singleton Emails (isolated activity)\n")
+    print("\n=== Singleton Emails (isolated activity) ===\n")
     for idx, e in enumerate(singletons, 1):
         print(f"S{idx:03}")
         print(f"  Subject : {e['raw_subject']}")
         print(f"  Sender  : {e['sender'] or '[empty]'}")
+        print(f"  Domain  : {e['sender_domain'] or '[empty]'}")
         print(f"  IP      : {e['ip'] or '[empty]'}")
-        print(f"  Score   : {e['email_score']} ({e['email_confidence']})\n")
+        print(f"  Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
 # =========================
-# HTML Export (with singletons)
+# HTML Export
 # =========================
 
 if args.export_html:
@@ -307,70 +432,119 @@ if args.export_html:
             "Low": "low"
         }[c]
 
-    html = f"""<!DOCTYPE html>
+    html_report = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>Phishing Campaign Report</title>
 <style>
-body {{ font-family: Arial, sans-serif; background:#fff; color:#000; }}
-table {{ border-collapse: collapse; width:100%; }}
-th, td {{ border:1px solid #ccc; padding:6px; }}
+body {{ font-family: Arial, sans-serif; background:#fff; color:#000; margin:20px; }}
+table {{ border-collapse: collapse; width:100%; margin-bottom:24px; }}
+th, td {{ border:1px solid #ccc; padding:6px; text-align:left; vertical-align:top; }}
 th {{ background:#f0f0f0; }}
 .high {{ background:#d32f2f; color:#fff; }}
 .medhigh {{ background:#f57c00; color:#fff; }}
-.medium {{ background:#fbc02d; }}
+.medium {{ background:#fbc02d; color:#000; }}
 .low {{ background:#388e3c; color:#fff; }}
+.small {{ font-size: 0.92em; color:#333; }}
 </style>
 </head>
 <body>
 
 <h1>Phishing Campaign Report</h1>
-<p>Generated: {ts}</p>
+<p>Generated: {h(ts)}</p>
+
+<h2>Summary</h2>
+<ul>
+<li>Total emails analyzed: {len(emails)}</li>
+<li>Campaigns (≥3 emails): {len(campaign_results)}</li>
+<li>Suspicious pairs (2 emails): {len(pair_results)}</li>
+<li>Singleton emails: {len(singletons)}</li>
+</ul>
 
 <h2>Campaigns</h2>
 <table>
-<tr><th>ID</th><th>Confidence</th><th>Emails</th><th>Subject</th></tr>
+<tr>
+<th>ID</th>
+<th>Confidence</th>
+<th>Emails</th>
+<th>Unique Senders</th>
+<th>Unique Domains</th>
+<th>Unique IPs</th>
+<th>Subject</th>
+</tr>
 """
 
     for c in campaign_results:
-        html += f"""
+        html_report += f"""
 <tr>
-<td>{c['campaign_id']}</td>
-<td class="{conf_class(c['confidence'])}">{c['confidence']}</td>
+<td>{h(c['cluster_id'])}</td>
+<td class="{h(conf_class(c['confidence']))}">{h(c['confidence'])}</td>
 <td>{c['email_count']}</td>
-<td>{c['subject_sample']}</td>
+<td>{c['unique_senders']}</td>
+<td>{c['unique_domains']}</td>
+<td>{c['unique_ips']}</td>
+<td>{h(c['subject_sample'])}</td>
 </tr>
 """
 
-    html += "</table>"
+    html_report += "</table>"
+
+    if pair_results:
+        html_report += """
+<h2>Suspicious Pairs (2 emails)</h2>
+<table>
+<tr>
+<th>ID</th>
+<th>Confidence</th>
+<th>Emails</th>
+<th>Unique Senders</th>
+<th>Unique Domains</th>
+<th>Unique IPs</th>
+<th>Subject</th>
+</tr>
+"""
+        for c in pair_results:
+            html_report += f"""
+<tr>
+<td>{h(c['cluster_id'])}</td>
+<td class="{h(conf_class(c['confidence']))}">{h(c['confidence'])}</td>
+<td>{c['email_count']}</td>
+<td>{c['unique_senders']}</td>
+<td>{c['unique_domains']}</td>
+<td>{c['unique_ips']}</td>
+<td>{h(c['subject_sample'])}</td>
+</tr>
+"""
+        html_report += "</table>"
 
     if singletons:
-        html += """
+        html_report += """
 <h2>Singleton Emails (isolated activity)</h2>
 <table>
-<tr><th>Subject</th><th>Sender</th><th>IP</th><th>Score</th></tr>
+<tr><th>Subject</th><th>Sender</th><th>Domain</th><th>IP</th><th>Score</th></tr>
 """
         for e in singletons:
-            html += f"""
+            html_report += f"""
 <tr>
-<td>{e['raw_subject']}</td>
-<td>{e['sender'] or '[empty]'}</td>
-<td>{e['ip'] or '[empty]'}</td>
-<td>{e['email_score']} ({e['email_confidence']})</td>
+<td>{h(e['raw_subject'])}</td>
+<td>{h(e['sender'] or '[empty]')}</td>
+<td>{h(e['sender_domain'] or '[empty]')}</td>
+<td>{h(e['ip'] or '[empty]')}</td>
+<td>{h(f"{e['signal_score']} ({e['signal_confidence']})")}</td>
 </tr>
 """
-        html += "</table>"
+        html_report += "</table>"
 
-    html += "</body></html>"
+    html_report += "</body></html>"
 
     with open(output_html, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(html_report)
 
     print(f"\n✅ HTML report exported to {output_html}")
 
 # =========================
-# CSV Export (polished filename only)
+# CSV Export
 # =========================
 
 if args.export_csv:
@@ -380,17 +554,43 @@ if args.export_csv:
         writer = csv.DictWriter(
             f,
             fieldnames=[
-                "campaign_id",
+                "cluster_id",
+                "cluster_type",
                 "subject_sample",
                 "email_count",
                 "avg_score",
                 "confidence",
                 "unique_senders",
+                "unique_domains",
                 "unique_ips"
             ]
         )
         writer.writeheader()
-        for c in campaign_results:
-            writer.writerow({k: c[k] for k in writer.fieldnames})
 
-    print(f"\n✅ Campaign summary exported to {output_file}")
+        for c in campaign_results:
+            writer.writerow({
+                "cluster_id": c["cluster_id"],
+                "cluster_type": "campaign",
+                "subject_sample": c["subject_sample"],
+                "email_count": c["email_count"],
+                "avg_score": c["avg_score"],
+                "confidence": c["confidence"],
+                "unique_senders": c["unique_senders"],
+                "unique_domains": c["unique_domains"],
+                "unique_ips": c["unique_ips"],
+            })
+
+        for c in pair_results:
+            writer.writerow({
+                "cluster_id": c["cluster_id"],
+                "cluster_type": "pair",
+                "subject_sample": c["subject_sample"],
+                "email_count": c["email_count"],
+                "avg_score": c["avg_score"],
+                "confidence": c["confidence"],
+                "unique_senders": c["unique_senders"],
+                "unique_domains": c["unique_domains"],
+                "unique_ips": c["unique_ips"],
+            })
+
+    print(f"\n✅ Cluster summary exported to {output_file}")
