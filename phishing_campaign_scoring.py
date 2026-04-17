@@ -3,6 +3,7 @@ import re
 import argparse
 import sys
 import html
+import json
 import logging
 from difflib import SequenceMatcher
 from collections import defaultdict, Counter
@@ -12,9 +13,9 @@ from datetime import datetime
 Phishing Campaign Scoring Tool
 ==============================
 
-Version   : v1.7
+Version   : v1.7.1
 Status    : Stable
-Date      : 2026-04-17
+Date      : 2026-04-18
 
 Purpose:
 --------
@@ -150,6 +151,9 @@ def extract_sender_domain(sender):
 
 def h(value):
     return html.escape(str(value), quote=True)
+
+def json_html(obj):
+    return html.escape(json.dumps(obj), quote=True)
 
 def slugify(value):
     value = str(value).lower()
@@ -586,6 +590,67 @@ def render_breakdown_badges(counter_dict):
         )
     return " ".join(parts)
 
+def render_mini_stat_bars(cluster):
+    total = max(cluster["email_count"], 1)
+
+    sender_pct = round((cluster["unique_senders"] / total) * 100)
+    domain_pct = round((cluster["unique_domains"] / total) * 100)
+    ip_pct = round((cluster["unique_ips"] / total) * 100)
+
+    return f"""
+    <div class="mini-bars">
+        <div class="mini-bar-row">
+            <div class="mini-bar-label">Unique senders</div>
+            <div class="mini-bar-track">
+                <div class="mini-bar-fill mini-bar-senders" style="width:{sender_pct}%"></div>
+            </div>
+            <div class="mini-bar-value">{cluster['unique_senders']}</div>
+        </div>
+        <div class="mini-bar-row">
+            <div class="mini-bar-label">Unique domains</div>
+            <div class="mini-bar-track">
+                <div class="mini-bar-fill mini-bar-domains" style="width:{domain_pct}%"></div>
+            </div>
+            <div class="mini-bar-value">{cluster['unique_domains']}</div>
+        </div>
+        <div class="mini-bar-row">
+            <div class="mini-bar-label">Unique IPs</div>
+            <div class="mini-bar-track">
+                <div class="mini-bar-fill mini-bar-ips" style="width:{ip_pct}%"></div>
+            </div>
+            <div class="mini-bar-value">{cluster['unique_ips']}</div>
+        </div>
+    </div>
+    """
+
+def render_breakdown_table(counter_dict):
+    if not counter_dict:
+        return '<div class="muted">No classification breakdown available.</div>'
+
+    total = sum(counter_dict.values()) or 1
+    rows = []
+    for label, count in sorted(counter_dict.items(), key=lambda x: (-x[1], x[0].lower())):
+        pct = round((count / total) * 100, 1)
+        rows.append(f"""
+        <tr>
+            <td><span class="badge {classification_css_class(label)}">{h(label)}</span></td>
+            <td>{count}</td>
+            <td>{pct}%</td>
+        </tr>
+        """)
+    return f"""
+    <div class="table-wrap">
+        <table class="sortable">
+            <tr>
+                <th>Classification</th>
+                <th>Count</th>
+                <th>Percent</th>
+            </tr>
+            {''.join(rows)}
+        </table>
+    </div>
+    """
+
 def render_email_table(cluster_emails):
     rows = []
     for e in cluster_emails:
@@ -642,10 +707,20 @@ def render_cluster_details(clusters, title, prefix):
                 <div class="badge-row">{render_breakdown_badges(cluster['classification_breakdown'])}</div>
             </div>
 
+            <div class="breakdown-block">
+                <div><strong>Cluster diversity snapshot:</strong></div>
+                {render_mini_stat_bars(cluster)}
+            </div>
+
+            <div class="breakdown-block">
+                <div><strong>Detailed classification breakdown:</strong></div>
+                {render_breakdown_table(cluster['classification_breakdown'])}
+            </div>
+
             {mixed_warning}
 
             <div class="table-wrap">
-                <table>
+                <table class="sortable">
                     <tr>
                         <th>Row</th>
                         <th>Subject</th>
@@ -678,7 +753,8 @@ if args.export_html:
             warning = '<span class="badge badge-warning">Mixed classes</span>'
 
         campaign_rows.append(f"""
-        <tr>
+        <tr class="searchable-block"
+            data-search="{h(c['cluster_id'])} {h(c['subject_sample'])} {h(c['campaign_classification'])}">
             <td><a href="#campaign-{h(c['cluster_id'])}">{h(c['cluster_id'])}</a></td>
             <td><span class="badge {confidence_css_class(c['confidence'])}">{h(c['confidence'])}</span></td>
             <td>{c['email_count']}</td>
@@ -699,7 +775,8 @@ if args.export_html:
             warning = '<span class="badge badge-warning">Mixed classes</span>'
 
         pairs_rows.append(f"""
-        <tr>
+        <tr class="searchable-block"
+            data-search="{h(c['cluster_id'])} {h(c['subject_sample'])} {h(c['campaign_classification'])}">
             <td><a href="#pair-{h(c['cluster_id'])}">{h(c['cluster_id'])}</a></td>
             <td><span class="badge {confidence_css_class(c['confidence'])}">{h(c['confidence'])}</span></td>
             <td>{c['email_count']}</td>
@@ -728,6 +805,22 @@ if args.export_html:
         </tr>
         """)
 
+    classification_matrix_rows = []
+    for c in campaign_results + pair_results:
+        for label, count in sorted(c["classification_breakdown"].items(), key=lambda x: (-x[1], x[0].lower())):
+            total = sum(c["classification_breakdown"].values()) or 1
+            pct = round((count / total) * 100, 1)
+            classification_matrix_rows.append(f"""
+            <tr>
+                <td>{h(c['cluster_id'])}</td>
+                <td>{"campaign" if c['cluster_id'].startswith('C') else "pair"}</td>
+                <td><span class="badge {classification_css_class(label)}">{h(label)}</span></td>
+                <td>{count}</td>
+                <td>{pct}%</td>
+                <td>{h(c['subject_sample'])}</td>
+            </tr>
+            """)
+
     html_report = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -753,6 +846,48 @@ body {{
     margin: 0;
     padding: 24px;
     line-height: 1.4;
+}}
+
+body.dark-mode {{
+    --bg: #0f172a;
+    --card: #111827;
+    --text: #e5e7eb;
+    --muted: #94a3b8;
+    --border: #334155;
+    --header: #1e293b;
+    --accent: #93c5fd;
+    --shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+}}
+
+body.dark-mode .hero {{
+    background: linear-gradient(135deg, #111827 0%, #172554 100%);
+}}
+
+body.dark-mode .trend-card,
+body.dark-mode details.cluster-details summary,
+body.dark-mode tr:nth-child(even) td,
+body.dark-mode tr:hover td {{
+    background: transparent;
+}}
+
+body.dark-mode .summary-card,
+body.dark-mode .section-card,
+body.dark-mode details.cluster-details,
+body.dark-mode .trend-card,
+body.dark-mode .search-input,
+body.dark-mode table {{
+    background: var(--card);
+    color: var(--text);
+}}
+
+body.dark-mode th {{
+    background: var(--header);
+}}
+
+body.dark-mode .theme-toggle {{
+    background: #1e293b;
+    color: #e5e7eb;
+    border-color: #475569;
 }}
 
 h1, h2, h3 {{
@@ -798,6 +933,16 @@ a:hover {{
     border-radius: 999px;
     padding: 8px 12px;
     font-size: 0.95rem;
+}}
+
+.theme-toggle {{
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    color: var(--text);
 }}
 
 .summary-grid {{
@@ -903,6 +1048,21 @@ th {{
     position: sticky;
     top: 0;
     z-index: 1;
+}}
+
+.sortable th {{
+    cursor: pointer;
+    user-select: none;
+}}
+
+.sortable th.sort-asc::after {{
+    content: " ▲";
+    font-size: 0.8rem;
+}}
+
+.sortable th.sort-desc::after {{
+    content: " ▼";
+    font-size: 0.8rem;
 }}
 
 tr:nth-child(even) td {{
@@ -1058,6 +1218,53 @@ details.cluster-details summary::-webkit-details-marker {{
     font-weight: bold;
 }}
 
+.mini-bars {{
+    margin-top: 10px;
+}}
+
+.mini-bar-row {{
+    display: grid;
+    grid-template-columns: 130px 1fr 50px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+}}
+
+.mini-bar-label {{
+    font-size: 0.92rem;
+    color: var(--muted);
+}}
+
+.mini-bar-track {{
+    width: 100%;
+    height: 10px;
+    background: #e7edf5;
+    border-radius: 999px;
+    overflow: hidden;
+}}
+
+.mini-bar-fill {{
+    height: 100%;
+    border-radius: 999px;
+}}
+
+.mini-bar-senders {{
+    background: #2563eb;
+}}
+
+.mini-bar-domains {{
+    background: #7c3aed;
+}}
+
+.mini-bar-ips {{
+    background: #ea580c;
+}}
+
+.mini-bar-value {{
+    font-weight: bold;
+    text-align: right;
+}}
+
 .mono {{
     font-family: Consolas, Menlo, Monaco, monospace;
     font-size: 0.93rem;
@@ -1091,6 +1298,9 @@ details.cluster-details summary::-webkit-details-marker {{
     .summary-badges {{
         justify-content: flex-start;
     }}
+    .mini-bar-row {{
+        grid-template-columns: 1fr;
+    }}
 }}
 </style>
 </head>
@@ -1109,7 +1319,9 @@ details.cluster-details summary::-webkit-details-marker {{
             <a href="#campaign-details">Campaign Details</a>
             <a href="#pairs-details">Suspicious Pairs</a>
             <a href="#singletons-details">Singletons</a>
+            <a href="#classification-matrix">Classification Matrix</a>
             <a href="#methodology">Methodology</a>
+            <button type="button" id="themeToggle" class="theme-toggle">Toggle dark mode</button>
         </div>
     </div>
 
@@ -1178,7 +1390,7 @@ details.cluster-details summary::-webkit-details-marker {{
                    placeholder="Filter report by campaign ID, subject, classification, domain, or singleton details...">
         </div>
         <div class="table-wrap">
-            <table>
+            <table class="sortable">
                 <tr>
                     <th>ID</th>
                     <th>Confidence</th>
@@ -1200,14 +1412,35 @@ details.cluster-details summary::-webkit-details-marker {{
         {render_cluster_details(campaign_results, "Campaign Details", "campaign")}
     </div>
 
-    <div id="pairs-details">
-        {render_cluster_details(pair_results, "Suspicious Pairs", "pair")}
+    <div id="pairs-details" class="section-card">
+        <h2>Suspicious Pairs Summary</h2>
+        <div class="table-wrap">
+            <table class="sortable">
+                <tr>
+                    <th>ID</th>
+                    <th>Confidence</th>
+                    <th>Emails</th>
+                    <th>Unique Senders</th>
+                    <th>Unique Domains</th>
+                    <th>Unique IPs</th>
+                    <th>Classification</th>
+                    <th>Class Consistency</th>
+                    <th>Warnings</th>
+                    <th>Subject</th>
+                </tr>
+                {"".join(pairs_rows) if pairs_rows else '<tr><td colspan="10" class="muted">No suspicious pairs found.</td></tr>'}
+            </table>
+        </div>
+    </div>
+
+    <div>
+        {render_cluster_details(pair_results, "Suspicious Pair Details", "pair")}
     </div>
 
     <div id="singletons-details" class="section-card">
         <h2>Singleton Emails</h2>
         <div class="table-wrap">
-            <table>
+            <table class="sortable">
                 <tr>
                     <th>Row</th>
                     <th>Subject</th>
@@ -1218,6 +1451,23 @@ details.cluster-details summary::-webkit-details-marker {{
                     <th>Signal</th>
                 </tr>
                 {"".join(singleton_rows) if singleton_rows else '<tr><td colspan="7" class="muted">No singleton emails.</td></tr>'}
+            </table>
+        </div>
+    </div>
+
+    <div id="classification-matrix" class="section-card">
+        <h2>Detailed Classification Breakdown Matrix</h2>
+        <div class="table-wrap">
+            <table class="sortable">
+                <tr>
+                    <th>Cluster ID</th>
+                    <th>Type</th>
+                    <th>Classification</th>
+                    <th>Count</th>
+                    <th>Percent</th>
+                    <th>Subject</th>
+                </tr>
+                {"".join(classification_matrix_rows) if classification_matrix_rows else '<tr><td colspan="6" class="muted">No classification breakdown data.</td></tr>'}
             </table>
         </div>
     </div>
@@ -1255,6 +1505,78 @@ details.cluster-details summary::-webkit-details-marker {{
 }})();
 </script>
 
+<script>
+(function() {{
+    function getCellValue(row, index) {{
+        const cell = row.children[index];
+        return cell ? cell.innerText.trim() : "";
+    }}
+
+    function asNumber(value) {{
+        const cleaned = value.replace(/[^0-9.\\-]/g, "");
+        const n = parseFloat(cleaned);
+        return isNaN(n) ? null : n;
+    }}
+
+    document.querySelectorAll("table.sortable").forEach(table => {{
+        const headers = table.querySelectorAll("th");
+        headers.forEach((th, index) => {{
+            th.addEventListener("click", () => {{
+                const rows = Array.from(table.querySelectorAll("tr")).slice(1);
+                const currentAsc = th.classList.contains("sort-asc");
+
+                headers.forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+                th.classList.add(currentAsc ? "sort-desc" : "sort-asc");
+
+                rows.sort((a, b) => {{
+                    const av = getCellValue(a, index);
+                    const bv = getCellValue(b, index);
+
+                    const an = asNumber(av);
+                    const bn = asNumber(bv);
+
+                    let cmp;
+                    if (an !== null && bn !== null) {{
+                        cmp = an - bn;
+                    }} else {{
+                        cmp = av.localeCompare(bv, undefined, {{
+                            numeric: true,
+                            sensitivity: "base"
+                        }});
+                    }}
+
+                    return currentAsc ? -cmp : cmp;
+                }});
+
+                rows.forEach(row => table.appendChild(row));
+            }});
+        }});
+    }});
+}})();
+</script>
+
+<script>
+(function() {{
+    const btn = document.getElementById("themeToggle");
+    if (!btn) return;
+
+    const key = "phish-report-dark-mode";
+    const saved = localStorage.getItem(key);
+
+    if (saved === "1") {{
+        document.body.classList.add("dark-mode");
+    }}
+
+    btn.addEventListener("click", function() {{
+        document.body.classList.toggle("dark-mode");
+        localStorage.setItem(
+            key,
+            document.body.classList.contains("dark-mode") ? "1" : "0"
+        );
+    }});
+}})();
+</script>
+
 </body>
 </html>
 """
@@ -1287,6 +1609,7 @@ if args.export_csv:
                 "campaign_classification",
                 "classification_consistency",
                 "unique_classifications",
+                "classification_breakdown",
             ]
         )
         writer.writeheader()
@@ -1305,6 +1628,7 @@ if args.export_csv:
                 "campaign_classification": c["campaign_classification"],
                 "classification_consistency": c["classification_consistency"],
                 "unique_classifications": c["unique_classifications"],
+                "classification_breakdown": json.dumps(c["classification_breakdown"], ensure_ascii=False, sort_keys=True),
             })
 
         for c in pair_results:
@@ -1321,6 +1645,7 @@ if args.export_csv:
                 "campaign_classification": c["campaign_classification"],
                 "classification_consistency": c["classification_consistency"],
                 "unique_classifications": c["unique_classifications"],
+                "classification_breakdown": json.dumps(c["classification_breakdown"], ensure_ascii=False, sort_keys=True),
             })
 
     print(f"\n✅ Cluster summary exported to {output_file}")
