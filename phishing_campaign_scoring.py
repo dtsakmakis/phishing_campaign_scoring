@@ -485,7 +485,7 @@ mixed_campaigns_count = sum(1 for c in campaign_results if c["unique_classificat
 # Console output
 # =========================
 
-print("\n✅ Phishing Campaign Evaluation (30-day snapshot)\n")
+print("\n✅ Phishing Campaign Evaluation\n")
 print(f"Total emails analyzed         : {len(emails)}")
 print(f"Campaigns (>={args.min_campaign_size} emails)      : {len(campaign_results)}")
 print(f"Suspicious pairs (2 emails)   : {len(pair_results)}")
