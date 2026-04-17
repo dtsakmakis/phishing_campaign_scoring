@@ -1,101 +1,101 @@
-EOC Phish EmailSubject,EOC Email From,EOC Sender IP
-Microsoft account security alert,support@microsoft-support.com,185.23.45.239
-URGENT: Password expires today!!!,admin@microsoft-support.com,185.23.45.84
-Microsoft account security alert,info@microsoft-support.com,185.23.45.72
-Password expiration notice,admin@microsoft-support.com,185.23.45.134
-Microsoft account security alert,alert@microsoft-support.com,185.23.45.97
-URGENT: Password expires today!!!,alert@microsoft-support.com,185.23.45.41
-Password expiration notice,info@microsoft-support.com,185.23.45.97
-Microsoft account security alert,no-reply@microsoft-support.com,185.23.45.35
-URGENT: Password expires today!!!,info@microsoft-support.com,185.23.45.121
-Password expiration notice,security@microsoft-support.com,185.23.45.251
-Password expiration notice,admin@microsoft-support.com,185.23.45.2
-Your password expires today,support@microsoft-support.com,185.23.45.192
-Action required: reset your password,no-reply@microsoft-support.com,185.23.45.67
-Password expiration notice,security@microsoft-support.com,185.23.45.194
-Your password expires today,security@microsoft-support.com,185.23.45.123
-Your password expires today,alert@microsoft-support.com,185.23.45.45
-Action required: reset your password,admin@microsoft-support.com,185.23.45.30
-Password expiration notice,alert@microsoft-support.com,185.23.45.49
-Microsoft account security alert,info@microsoft-support.com,185.23.45.219
-URGENT: Password expires today!!!,security@microsoft-support.com,185.23.45.211
-Action required: reset your password,no-reply@microsoft-support.com,185.23.45.98
-Microsoft account security alert,no-reply@microsoft-support.com,185.23.45.155
-Password expiration notice,alert@microsoft-support.com,185.23.45.164
-Password expiration notice,support@microsoft-support.com,185.23.45.18
-Microsoft account security alert,info@microsoft-support.com,185.23.45.27
-Microsoft account security alert,info@microsoft-support.com,185.23.45.61
-Action required: reset your password,admin@microsoft-support.com,185.23.45.246
-Microsoft account security alert,alert@microsoft-support.com,185.23.45.202
-URGENT: Password expires today!!!,alert@microsoft-support.com,185.23.45.84
-URGENT: Password expires today!!!,info@microsoft-support.com,185.23.45.145
-URGENT: Password expires today!!!,info@microsoft-support.com,185.23.45.117
-Your password expires today,security@microsoft-support.com,185.23.45.12
-Your password expires today,alert@microsoft-support.com,185.23.45.173
-Action required: reset your password,no-reply@microsoft-support.com,185.23.45.140
-Password expiration notice,security@microsoft-support.com,185.23.45.59
-Your password expires today,alert@microsoft-support.com,185.23.45.110
-Microsoft account security alert,alert@microsoft-support.com,185.23.45.234
-Your password expires today,alert@microsoft-support.com,185.23.45.229
-Microsoft account security alert,admin@microsoft-support.com,185.23.45.160
-Microsoft account security alert,info@microsoft-support.com,185.23.45.45
-Package held at customs,alert@dhl-shipping.net,102.54.22.15
-Your parcel is waiting,info@dhl-shipping.net,102.54.22.18
-Shipment delayed - update info,support@dhl-shipping.net,102.54.22.200
-Package held at customs,info@dhl-shipping.net,102.54.22.182
-Delivery attempt failed,security@dhl-shipping.net,102.54.22.96
-Delivery attempt failed,security@dhl-shipping.net,102.54.22.66
-Delivery attempt failed,admin@dhl-shipping.net,102.54.22.56
-Delivery attempt failed,admin@dhl-shipping.net,102.54.22.173
-Your parcel is waiting,admin@dhl-shipping.net,102.54.22.7
-Shipment delayed - update info,info@dhl-shipping.net,102.54.22.226
-Package held at customs,support@dhl-shipping.net,102.54.22.119
-Your parcel is waiting,no-reply@dhl-shipping.net,102.54.22.175
-DHL Delivery - Action Required,support@dhl-shipping.net,102.54.22.156
-Your parcel is waiting,alert@dhl-shipping.net,102.54.22.5
-Delivery attempt failed,support@dhl-shipping.net,102.54.22.9
-Delivery attempt failed,alert@dhl-shipping.net,102.54.22.223
-Delivery attempt failed,admin@dhl-shipping.net,102.54.22.208
-Package held at customs,support@dhl-shipping.net,102.54.22.142
-Shipment delayed - update info,alert@dhl-shipping.net,102.54.22.132
-Package held at customs,support@dhl-shipping.net,102.54.22.79
-DHL Delivery - Action Required,support@dhl-shipping.net,102.54.22.103
-Shipment delayed - update info,support@dhl-shipping.net,102.54.22.25
-Shipment delayed - update info,admin@dhl-shipping.net,102.54.22.171
-Delivery attempt failed,admin@dhl-shipping.net,102.54.22.84
-Your parcel is waiting,no-reply@dhl-shipping.net,102.54.22.36
-Delivery attempt failed,security@dhl-shipping.net,102.54.22.208
-DHL Delivery - Action Required,admin@dhl-shipping.net,102.54.22.118
-Your parcel is waiting,security@dhl-shipping.net,102.54.22.217
-Your parcel is waiting,alert@dhl-shipping.net,102.54.22.239
-Package held at customs,support@dhl-shipping.net,102.54.22.197
-Account suspended - verify now,support@bank-secure.com,77.88.99.50
-Bank account locked,no-reply@bank-secure.com,77.88.99.36
-Unusual activity detected,alert@bank-secure.com,77.88.99.237
-Bank account locked,support@bank-secure.com,77.88.99.83
-Account suspended - verify now,security@bank-secure.com,77.88.99.44
-Bank account locked,admin@bank-secure.com,77.88.99.11
-Verify your bank account,alert@bank-secure.com,77.88.99.5
-Confirm your identity,no-reply@bank-secure.com,77.88.99.210
-Confirm your identity,admin@bank-secure.com,77.88.99.138
-Account suspended - verify now,security@bank-secure.com,77.88.99.188
-Bank account locked,info@bank-secure.com,77.88.99.30
-Confirm your identity,security@bank-secure.com,77.88.99.139
-Bank account locked,no-reply@bank-secure.com,77.88.99.114
-Verify your bank account,alert@bank-secure.com,77.88.99.129
-Confirm your identity,admin@bank-secure.com,77.88.99.39
-Confirm your identity,alert@bank-secure.com,77.88.99.11
-Bank account locked,info@bank-secure.com,77.88.99.79
-Confirm your identity,no-reply@bank-secure.com,77.88.99.130
-Account suspended - verify now,admin@bank-secure.com,77.88.99.177
-Confirm your identity,no-reply@bank-secure.com,77.88.99.132
-Invoice attached,admin@random-mail.com,10.10.10.141
-Invoice attached,alert@random-mail.com,10.10.10.39
-Invoice attached,security@random-mail.com,10.10.10.42
-Meeting reminder,info@random-mail.com,10.10.10.152
-Weekly report,alert@random-mail.com,10.10.10.244
-Hello,no-reply@random-mail.com,10.10.10.145
-Weekly report,info@random-mail.com,10.10.10.150
-Invoice attached,no-reply@random-mail.com,10.10.10.208
-Lunch plans?,info@random-mail.com,10.10.10.210
-Lunch plans?,no-reply@random-mail.com,10.10.10.194
+EmailSubject,EmailFrom,SenderΙP, Classification
+Microsoft account security alert,support@microsoft-support.com,185.23.45.239,Phishing
+URGENT: Password expires today!!!,admin@microsoft-support.com,185.23.45.84,Phishing
+Microsoft account security alert,info@microsoft-support.com,185.23.45.72,Phishing
+Password expiration notice,admin@microsoft-support.com,185.23.45.134,Phishing
+Microsoft account security alert,alert@microsoft-support.com,185.23.45.97,Phishing
+URGENT: Password expires today!!!,alert@microsoft-support.com,185.23.45.41,Phishing
+Password expiration notice,info@microsoft-support.com,185.23.45.97,Phishing
+Microsoft account security alert,no-reply@microsoft-support.com,185.23.45.35,Phishing
+URGENT: Password expires today!!!,info@microsoft-support.com,185.23.45.121,Phishing
+Password expiration notice,security@microsoft-support.com,185.23.45.251,Phishing
+Password expiration notice,admin@microsoft-support.com,185.23.45.2,Phishing
+Your password expires today,support@microsoft-support.com,185.23.45.192,Phishing
+Action required: reset your password,no-reply@microsoft-support.com,185.23.45.67,Phishing
+Password expiration notice,security@microsoft-support.com,185.23.45.194,Phishing
+Your password expires today,security@microsoft-support.com,185.23.45.123,Phishing
+Your password expires today,alert@microsoft-support.com,185.23.45.45,Phishing
+Action required: reset your password,admin@microsoft-support.com,185.23.45.30,Phishing
+Password expiration notice,alert@microsoft-support.com,185.23.45.49,Phishing
+Microsoft account security alert,info@microsoft-support.com,185.23.45.219,Phishing
+URGENT: Password expires today!!!,security@microsoft-support.com,185.23.45.211,Targeted/Spear Phishing
+Action required: reset your password,no-reply@microsoft-support.com,185.23.45.98,Targeted/Spear Phishing
+Microsoft account security alert,no-reply@microsoft-support.com,185.23.45.155,Targeted/Spear Phishing
+Password expiration notice,alert@microsoft-support.com,185.23.45.164,Targeted/Spear Phishing
+Password expiration notice,support@microsoft-support.com,185.23.45.18,Targeted/Spear Phishing
+Microsoft account security alert,info@microsoft-support.com,185.23.45.27,Targeted/Spear Phishing
+Microsoft account security alert,info@microsoft-support.com,185.23.45.61,Targeted/Spear Phishing
+Action required: reset your password,admin@microsoft-support.com,185.23.45.246,Targeted/Spear Phishing
+Microsoft account security alert,alert@microsoft-support.com,185.23.45.202,Targeted/Spear Phishing
+URGENT: Password expires today!!!,alert@microsoft-support.com,185.23.45.84,Targeted/Spear Phishing
+URGENT: Password expires today!!!,info@microsoft-support.com,185.23.45.145,Targeted/Spear Phishing
+URGENT: Password expires today!!!,info@microsoft-support.com,185.23.45.117,Targeted/Spear Phishing
+Your password expires today,security@microsoft-support.com,185.23.45.12,Targeted/Spear Phishing
+Your password expires today,alert@microsoft-support.com,185.23.45.173,Targeted/Spear Phishing
+Action required: reset your password,no-reply@microsoft-support.com,185.23.45.140,Targeted/Spear Phishing
+Password expiration notice,security@microsoft-support.com,185.23.45.59,Malicious Attachment
+Your password expires today,alert@microsoft-support.com,185.23.45.110,Malicious Attachment
+Microsoft account security alert,alert@microsoft-support.com,185.23.45.234,Malicious Attachment
+Your password expires today,alert@microsoft-support.com,185.23.45.229,Malicious Attachment
+Microsoft account security alert,admin@microsoft-support.com,185.23.45.160,Malicious Attachment
+Microsoft account security alert,info@microsoft-support.com,185.23.45.45,Malicious Attachment
+Package held at customs,alert@dhl-shipping.net,102.54.22.15,Malicious Attachment
+Your parcel is waiting,info@dhl-shipping.net,102.54.22.18,Malicious Attachment
+Shipment delayed - update info,support@dhl-shipping.net,102.54.22.200,Malicious Attachment
+Package held at customs,info@dhl-shipping.net,102.54.22.182,SCAM/Fraud
+Delivery attempt failed,security@dhl-shipping.net,102.54.22.96,SCAM/Fraud
+Delivery attempt failed,security@dhl-shipping.net,102.54.22.66,SCAM/Fraud
+Delivery attempt failed,admin@dhl-shipping.net,102.54.22.56,SCAM/Fraud
+Delivery attempt failed,admin@dhl-shipping.net,102.54.22.173,SCAM/Fraud
+Your parcel is waiting,admin@dhl-shipping.net,102.54.22.7,SCAM/Fraud
+Shipment delayed - update info,info@dhl-shipping.net,102.54.22.226,SCAM/Fraud
+Package held at customs,support@dhl-shipping.net,102.54.22.119,SCAM/Fraud
+Your parcel is waiting,no-reply@dhl-shipping.net,102.54.22.175,SCAM/Fraud
+DHL Delivery - Action Required,support@dhl-shipping.net,102.54.22.156,SCAM/Fraud
+Your parcel is waiting,alert@dhl-shipping.net,102.54.22.5,SCAM/Fraud
+Delivery attempt failed,support@dhl-shipping.net,102.54.22.9,SCAM/Fraud
+Delivery attempt failed,alert@dhl-shipping.net,102.54.22.223,SCAM/Fraud
+Delivery attempt failed,admin@dhl-shipping.net,102.54.22.208,SCAM/Fraud
+Package held at customs,support@dhl-shipping.net,102.54.22.142,SCAM/Fraud
+Shipment delayed - update info,alert@dhl-shipping.net,102.54.22.132,C-level Impersonation
+Package held at customs,support@dhl-shipping.net,102.54.22.79,C-level Impersonation
+DHL Delivery - Action Required,support@dhl-shipping.net,102.54.22.103,C-level Impersonation
+Shipment delayed - update info,support@dhl-shipping.net,102.54.22.25,C-level Impersonation
+Shipment delayed - update info,admin@dhl-shipping.net,102.54.22.171,C-level Impersonation
+Delivery attempt failed,admin@dhl-shipping.net,102.54.22.84,C-level Impersonation
+Your parcel is waiting,no-reply@dhl-shipping.net,102.54.22.36,C-level Impersonation
+Delivery attempt failed,security@dhl-shipping.net,102.54.22.208,C-level Impersonation
+DHL Delivery - Action Required,admin@dhl-shipping.net,102.54.22.118,C-level Impersonation
+Your parcel is waiting,security@dhl-shipping.net,102.54.22.217,C-level Impersonation
+Your parcel is waiting,alert@dhl-shipping.net,102.54.22.239,C-level Impersonation
+Package held at customs,support@dhl-shipping.net,102.54.22.197,C-level Impersonation
+Account suspended - verify now,support@bank-secure.com,77.88.99.50,C-level Impersonation
+Bank account locked,no-reply@bank-secure.com,77.88.99.36,C-level Impersonation
+Unusual activity detected,alert@bank-secure.com,77.88.99.237,C-level Impersonation
+Bank account locked,support@bank-secure.com,77.88.99.83,C-level Impersonation
+Account suspended - verify now,security@bank-secure.com,77.88.99.44,C-level Impersonation
+Bank account locked,admin@bank-secure.com,77.88.99.11,C-level Impersonation
+Verify your bank account,alert@bank-secure.com,77.88.99.5,C-level Impersonation
+Confirm your identity,no-reply@bank-secure.com,77.88.99.210,C-level Impersonation
+Confirm your identity,admin@bank-secure.com,77.88.99.138,C-level Impersonation
+Account suspended - verify now,security@bank-secure.com,77.88.99.188,C-level Impersonation
+Bank account locked,info@bank-secure.com,77.88.99.30,C-level Impersonation
+Confirm your identity,security@bank-secure.com,77.88.99.139,C-level Impersonation
+Bank account locked,no-reply@bank-secure.com,77.88.99.114,C-level Impersonation
+Verify your bank account,alert@bank-secure.com,77.88.99.129,Phishing
+Confirm your identity,admin@bank-secure.com,77.88.99.39,Phishing
+Confirm your identity,alert@bank-secure.com,77.88.99.11,Phishing
+Bank account locked,info@bank-secure.com,77.88.99.79,Phishing
+Confirm your identity,no-reply@bank-secure.com,77.88.99.130,Phishing
+Account suspended - verify now,admin@bank-secure.com,77.88.99.177,Phishing
+Confirm your identity,no-reply@bank-secure.com,77.88.99.132,Phishing
+Invoice attached,admin@random-mail.com,10.10.10.141,Phishing
+Invoice attached,alert@random-mail.com,10.10.10.39,Phishing
+Invoice attached,security@random-mail.com,10.10.10.42,Phishing
+Meeting reminder,info@random-mail.com,10.10.10.152,Phishing
+Weekly report,alert@random-mail.com,10.10.10.244,Phishing
+Hello,no-reply@random-mail.com,10.10.10.145,Phishing
+Weekly report,info@random-mail.com,10.10.10.150,Phishing
+Invoice attached,no-reply@random-mail.com,10.10.10.208,Phishing
+Lunch plans?,info@random-mail.com,10.10.10.210,Phishing
+Lunch plans?,no-reply@random-mail.com,10.10.10.194,Phishing
