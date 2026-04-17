@@ -12,7 +12,7 @@ from datetime import datetime
 Phishing Campaign Scoring Tool
 ==============================
 
-Version   : v1.6
+Version   : v1.7
 Status    : Stable
 Date      : 2026-04-17
 
@@ -100,6 +100,8 @@ WEIGHTS = {
     "ip": 0.10,
 }
 
+TREND_LIMIT = 5
+
 # =========================
 # Normalization helpers
 # =========================
@@ -146,6 +148,14 @@ def extract_sender_domain(sender):
         return ""
     return sender.split("@", 1)[1].strip().lower()
 
+def h(value):
+    return html.escape(str(value), quote=True)
+
+def slugify(value):
+    value = str(value).lower()
+    value = re.sub(r'[^a-z0-9]+', '-', value)
+    return value.strip('-') or "item"
+
 # =========================
 # Scoring helpers
 # =========================
@@ -178,8 +188,25 @@ def auto_csv_filename():
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"phishing_campaign_summary_{ts}.csv"
 
-def h(value):
-    return html.escape(str(value), quote=True)
+def confidence_css_class(conf):
+    return {
+        "High": "badge-high",
+        "Medium-High": "badge-medhigh",
+        "Medium": "badge-medium",
+        "Low": "badge-low",
+    }.get(conf, "badge-neutral")
+
+def classification_css_class(classification):
+    key = classification.strip().lower()
+    mapping = {
+        "phishing": "class-phishing",
+        "c-level impersonation": "class-impersonation",
+        "malicious attachment": "class-malicious-attachment",
+        "bec": "class-bec",
+        "credential harvesting": "class-credential",
+        "[empty]": "class-empty",
+    }
+    return mapping.get(key, "class-generic")
 
 # =========================
 # Pairwise clustering logic
@@ -209,7 +236,6 @@ def should_link(a, b):
             )
         return True
 
-    # More conservative use of IP-only corroboration
     if subj_sim >= SUBJECT_SIM_MEDIUM and (same_sender or same_domain):
         if args.debug:
             reasons = []
@@ -430,6 +456,28 @@ for idx, c in enumerate(sorted(pairs, key=len, reverse=True), 1):
     pair_results.append(summarize_cluster(c, f"P{idx:03}"))
 
 # =========================
+# Trend / summary helpers
+# =========================
+
+classification_counter = Counter(
+    e["classification"] for e in emails if e["classification"]
+)
+sender_domain_counter = Counter(
+    e["sender_domain"] for e in emails if e["sender_domain"]
+)
+ip_counter = Counter(
+    e["ip"] for e in emails if e["ip"]
+)
+
+top_classifications = classification_counter.most_common(TREND_LIMIT)
+top_domains = sender_domain_counter.most_common(TREND_LIMIT)
+top_ips = ip_counter.most_common(TREND_LIMIT)
+
+largest_campaign_size = max((c["email_count"] for c in campaign_results), default=0)
+most_common_classification = top_classifications[0][0] if top_classifications else "[empty]"
+mixed_campaigns_count = sum(1 for c in campaign_results if c["unique_classifications"] > 1)
+
+# =========================
 # Console output
 # =========================
 
@@ -443,18 +491,18 @@ if campaign_results:
     print("=== Campaigns ===\n")
     for c in campaign_results:
         print(f"{c['cluster_id']}")
-        print(f"  Emails               : {c['email_count']}")
-        print(f"  Avg signal score     : {c['avg_score']}")
-        print(f"  Confidence           : {c['confidence']}")
-        print(f"  Unique senders       : {c['unique_senders']}")
-        print(f"  Unique domains       : {c['unique_domains']}")
-        print(f"  Unique IPs           : {c['unique_ips']}")
-        print(f"  Subject sample       : {c['subject_sample']}")
-        print(f"  Classification       : {c['campaign_classification']}")
-        print(f"  Class consistency    : {c['classification_consistency']}")
+        print(f"  Emails                : {c['email_count']}")
+        print(f"  Avg signal score      : {c['avg_score']}")
+        print(f"  Confidence            : {c['confidence']}")
+        print(f"  Unique senders        : {c['unique_senders']}")
+        print(f"  Unique domains        : {c['unique_domains']}")
+        print(f"  Unique IPs            : {c['unique_ips']}")
+        print(f"  Subject sample        : {c['subject_sample']}")
+        print(f"  Classification        : {c['campaign_classification']}")
+        print(f"  Class consistency     : {c['classification_consistency']}")
         print(f"  Unique classifications: {c['unique_classifications']}")
         if c["unique_classifications"] > 1:
-            print("  Warning              : Mixed analyst classifications inside cluster")
+            print("  Warning               : Mixed analyst classifications inside cluster")
         print()
 
         if not args.summary_only:
@@ -472,18 +520,18 @@ if args.include_pairs and pair_results:
     print("\n=== Suspicious Pairs (2 emails) ===\n")
     for c in pair_results:
         print(f"{c['cluster_id']}")
-        print(f"  Emails               : {c['email_count']}")
-        print(f"  Avg signal score     : {c['avg_score']}")
-        print(f"  Confidence           : {c['confidence']}")
-        print(f"  Unique senders       : {c['unique_senders']}")
-        print(f"  Unique domains       : {c['unique_domains']}")
-        print(f"  Unique IPs           : {c['unique_ips']}")
-        print(f"  Subject sample       : {c['subject_sample']}")
-        print(f"  Classification       : {c['campaign_classification']}")
-        print(f"  Class consistency    : {c['classification_consistency']}")
+        print(f"  Emails                : {c['email_count']}")
+        print(f"  Avg signal score      : {c['avg_score']}")
+        print(f"  Confidence            : {c['confidence']}")
+        print(f"  Unique senders        : {c['unique_senders']}")
+        print(f"  Unique domains        : {c['unique_domains']}")
+        print(f"  Unique IPs            : {c['unique_ips']}")
+        print(f"  Subject sample        : {c['subject_sample']}")
+        print(f"  Classification        : {c['campaign_classification']}")
+        print(f"  Class consistency     : {c['classification_consistency']}")
         print(f"  Unique classifications: {c['unique_classifications']}")
         if c["unique_classifications"] > 1:
-            print("  Warning              : Mixed analyst classifications inside cluster")
+            print("  Warning               : Mixed analyst classifications inside cluster")
         print()
 
         if not args.summary_only:
@@ -510,6 +558,112 @@ if args.include_singletons and singletons:
         print(f"  Score   : {e['signal_score']} ({e['signal_confidence']})\n")
 
 # =========================
+# HTML helpers
+# =========================
+
+def render_counter_list(items):
+    if not items:
+        return '<div class="muted">No data available.</div>'
+    rows = []
+    for label, count in items:
+        rows.append(
+            f"""
+            <div class="trend-item">
+                <span class="trend-label">{h(label)}</span>
+                <span class="trend-count">{count}</span>
+            </div>
+            """
+        )
+    return "\n".join(rows)
+
+def render_breakdown_badges(counter_dict):
+    if not counter_dict:
+        return '<span class="badge badge-neutral">[empty]</span>'
+    parts = []
+    for label, count in sorted(counter_dict.items(), key=lambda x: (-x[1], x[0].lower())):
+        parts.append(
+            f'<span class="badge {classification_css_class(label)}">{h(label)}: {count}</span>'
+        )
+    return " ".join(parts)
+
+def render_email_table(cluster_emails):
+    rows = []
+    for e in cluster_emails:
+        rows.append(f"""
+        <tr>
+            <td>{e['row_num']}</td>
+            <td>{h(e['raw_subject'])}</td>
+            <td class="mono">{h(e['sender'] or '[empty]')}</td>
+            <td class="mono">{h(e['sender_domain'] or '[empty]')}</td>
+            <td class="mono">{h(e['ip'] or '[empty]')}</td>
+            <td><span class="badge {classification_css_class(e['classification'] or '[empty]')}">{h(e['classification'] or '[empty]')}</span></td>
+            <td><span class="badge {confidence_css_class(e['signal_confidence'])}">{h(e['signal_confidence'])}</span> <span class="score-inline">{e['signal_score']}</span></td>
+        </tr>
+        """)
+    return "\n".join(rows)
+
+def render_cluster_details(clusters, title, prefix):
+    if not clusters:
+        return f'<div class="section-card"><h2 id="{slugify(title)}">{h(title)}</h2><div class="muted">No entries.</div></div>'
+
+    blocks = [f'<div class="section-card"><h2 id="{slugify(title)}">{h(title)}</h2>']
+    for cluster in clusters:
+        mixed_warning = ""
+        if cluster["unique_classifications"] > 1:
+            mixed_warning = '<div class="warning-banner">Mixed analyst classifications inside cluster</div>'
+
+        details_id = f"{prefix}-{cluster['cluster_id']}"
+        blocks.append(f"""
+        <details class="cluster-details searchable-block" id="{details_id}"
+                 data-search="{h(cluster['cluster_id'])} {h(cluster['subject_sample'])} {h(cluster['campaign_classification'])}">
+            <summary>
+                <div class="summary-main">
+                    <span class="cluster-id">{h(cluster['cluster_id'])}</span>
+                    <span class="cluster-subject">{h(cluster['subject_sample'])}</span>
+                </div>
+                <div class="summary-badges">
+                    <span class="badge {confidence_css_class(cluster['confidence'])}">{h(cluster['confidence'])}</span>
+                    <span class="badge {classification_css_class(cluster['campaign_classification'])}">{h(cluster['campaign_classification'])}</span>
+                    <span class="badge badge-neutral">{cluster['email_count']} emails</span>
+                </div>
+            </summary>
+
+            <div class="cluster-meta-grid">
+                <div><strong>Avg signal score:</strong> {cluster['avg_score']}</div>
+                <div><strong>Confidence:</strong> {h(cluster['confidence'])}</div>
+                <div><strong>Unique senders:</strong> {cluster['unique_senders']}</div>
+                <div><strong>Unique domains:</strong> {cluster['unique_domains']}</div>
+                <div><strong>Unique IPs:</strong> {cluster['unique_ips']}</div>
+                <div><strong>Class consistency:</strong> {h(cluster['classification_consistency'])}</div>
+            </div>
+
+            <div class="breakdown-block">
+                <div><strong>Classification breakdown:</strong></div>
+                <div class="badge-row">{render_breakdown_badges(cluster['classification_breakdown'])}</div>
+            </div>
+
+            {mixed_warning}
+
+            <div class="table-wrap">
+                <table>
+                    <tr>
+                        <th>Row</th>
+                        <th>Subject</th>
+                        <th>Sender</th>
+                        <th>Domain</th>
+                        <th>IP</th>
+                        <th>Classification</th>
+                        <th>Signal</th>
+                    </tr>
+                    {render_email_table(cluster['emails'])}
+                </table>
+            </div>
+        </details>
+        """)
+    blocks.append("</div>")
+    return "\n".join(blocks)
+
+# =========================
 # HTML Export
 # =========================
 
@@ -517,13 +671,62 @@ if args.export_html:
     output_html = auto_html_filename() if args.export_html == "AUTO" else args.export_html
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def conf_class(c):
-        return {
-            "High": "high",
-            "Medium-High": "medhigh",
-            "Medium": "medium",
-            "Low": "low"
-        }[c]
+    campaign_rows = []
+    for c in campaign_results:
+        warning = ""
+        if c["unique_classifications"] > 1:
+            warning = '<span class="badge badge-warning">Mixed classes</span>'
+
+        campaign_rows.append(f"""
+        <tr>
+            <td><a href="#campaign-{h(c['cluster_id'])}">{h(c['cluster_id'])}</a></td>
+            <td><span class="badge {confidence_css_class(c['confidence'])}">{h(c['confidence'])}</span></td>
+            <td>{c['email_count']}</td>
+            <td>{c['unique_senders']}</td>
+            <td>{c['unique_domains']}</td>
+            <td>{c['unique_ips']}</td>
+            <td><span class="badge {classification_css_class(c['campaign_classification'])}">{h(c['campaign_classification'])}</span></td>
+            <td>{h(c['classification_consistency'])}</td>
+            <td>{warning}</td>
+            <td>{h(c['subject_sample'])}</td>
+        </tr>
+        """)
+
+    pairs_rows = []
+    for c in pair_results:
+        warning = ""
+        if c["unique_classifications"] > 1:
+            warning = '<span class="badge badge-warning">Mixed classes</span>'
+
+        pairs_rows.append(f"""
+        <tr>
+            <td><a href="#pair-{h(c['cluster_id'])}">{h(c['cluster_id'])}</a></td>
+            <td><span class="badge {confidence_css_class(c['confidence'])}">{h(c['confidence'])}</span></td>
+            <td>{c['email_count']}</td>
+            <td>{c['unique_senders']}</td>
+            <td>{c['unique_domains']}</td>
+            <td>{c['unique_ips']}</td>
+            <td><span class="badge {classification_css_class(c['campaign_classification'])}">{h(c['campaign_classification'])}</span></td>
+            <td>{h(c['classification_consistency'])}</td>
+            <td>{warning}</td>
+            <td>{h(c['subject_sample'])}</td>
+        </tr>
+        """)
+
+    singleton_rows = []
+    for e in singletons:
+        singleton_rows.append(f"""
+        <tr class="searchable-block"
+            data-search="{h(e['raw_subject'])} {h(e['classification'])} {h(e['sender_domain'])}">
+            <td>{e['row_num']}</td>
+            <td>{h(e['raw_subject'])}</td>
+            <td class="mono">{h(e['sender'] or '[empty]')}</td>
+            <td class="mono">{h(e['sender_domain'] or '[empty]')}</td>
+            <td class="mono">{h(e['ip'] or '[empty]')}</td>
+            <td><span class="badge {classification_css_class(e['classification'] or '[empty]')}">{h(e['classification'] or '[empty]')}</span></td>
+            <td><span class="badge {confidence_css_class(e['signal_confidence'])}">{h(e['signal_confidence'])}</span> <span class="score-inline">{e['signal_score']}</span></td>
+        </tr>
+        """)
 
     html_report = f"""<!DOCTYPE html>
 <html>
@@ -531,127 +734,530 @@ if args.export_html:
 <meta charset="utf-8">
 <title>Phishing Campaign Report</title>
 <style>
-body {{ font-family: Arial, sans-serif; background:#fff; color:#000; margin:20px; }}
-table {{ border-collapse: collapse; width:100%; margin-bottom:24px; }}
-th, td {{ border:1px solid #ccc; padding:6px; text-align:left; vertical-align:top; }}
-th {{ background:#f0f0f0; }}
-.high {{ background:#d32f2f; color:#fff; }}
-.medhigh {{ background:#f57c00; color:#fff; }}
-.medium {{ background:#fbc02d; color:#000; }}
-.low {{ background:#388e3c; color:#fff; }}
-.warning {{ color:#b71c1c; font-weight:bold; }}
+:root {{
+    --bg: #f5f7fb;
+    --card: #ffffff;
+    --text: #18212f;
+    --muted: #617085;
+    --border: #d9e0ea;
+    --header: #eef3f9;
+    --accent: #1f4b99;
+    --shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
+}}
+
+* {{ box-sizing: border-box; }}
+body {{
+    font-family: Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px;
+    line-height: 1.4;
+}}
+
+h1, h2, h3 {{
+    margin-top: 0;
+}}
+
+a {{
+    color: var(--accent);
+    text-decoration: none;
+}}
+a:hover {{
+    text-decoration: underline;
+}}
+
+.page {{
+    max-width: 1500px;
+    margin: 0 auto;
+}}
+
+.hero {{
+    background: linear-gradient(135deg, #ffffff 0%, #edf4ff 100%);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+}}
+
+.hero-meta {{
+    color: var(--muted);
+    margin-top: 8px;
+}}
+
+.nav-links {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+}}
+.nav-links a {{
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+}}
+
+.summary-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+}}
+
+.summary-card {{
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+}}
+.summary-label {{
+    font-size: 0.95rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+}}
+.summary-value {{
+    font-size: 1.9rem;
+    font-weight: bold;
+}}
+.summary-sub {{
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 0.92rem;
+}}
+
+.section-card {{
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+}}
+
+.trends-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}}
+
+.trend-card {{
+    background: #fbfcfe;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+}}
+
+.trend-item {{
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 8px 0;
+    border-bottom: 1px dashed #e3e8f0;
+}}
+.trend-item:last-child {{
+    border-bottom: none;
+}}
+.trend-label {{
+    word-break: break-word;
+}}
+.trend-count {{
+    font-weight: bold;
+    white-space: nowrap;
+}}
+
+.search-wrap {{
+    margin: 14px 0 18px 0;
+}}
+.search-input {{
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 1rem;
+    background: #fff;
+}}
+
+.table-wrap {{
+    overflow-x: auto;
+}}
+
+table {{
+    border-collapse: collapse;
+    width: 100%;
+    background: #fff;
+}}
+
+th, td {{
+    border: 1px solid var(--border);
+    padding: 9px 10px;
+    text-align: left;
+    vertical-align: top;
+}}
+
+th {{
+    background: var(--header);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}}
+
+tr:nth-child(even) td {{
+    background: #fcfdff;
+}}
+
+tr:hover td {{
+    background: #f6faff;
+}}
+
+details.cluster-details {{
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 14px;
+    background: #fff;
+    overflow: hidden;
+}}
+
+details.cluster-details summary {{
+    list-style: none;
+    cursor: pointer;
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    background: #f9fbff;
+}}
+
+details.cluster-details summary::-webkit-details-marker {{
+    display: none;
+}}
+
+.summary-main {{
+    min-width: 0;
+}}
+
+.cluster-id {{
+    display: inline-block;
+    font-weight: bold;
+    margin-right: 8px;
+}}
+
+.cluster-subject {{
+    color: var(--text);
+    word-break: break-word;
+}}
+
+.summary-badges {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}}
+
+.cluster-meta-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    padding: 16px;
+}}
+
+.breakdown-block {{
+    padding: 0 16px 14px 16px;
+}}
+
+.badge-row {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}}
+
+.badge {{
+    display: inline-block;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.88rem;
+    font-weight: bold;
+    border: 1px solid transparent;
+}}
+
+.badge-high {{
+    background: #8b1e2d;
+    color: #fff;
+}}
+.badge-medhigh {{
+    background: #d97706;
+    color: #fff;
+}}
+.badge-medium {{
+    background: #facc15;
+    color: #2b2b2b;
+}}
+.badge-low {{
+    background: #15803d;
+    color: #fff;
+}}
+.badge-neutral {{
+    background: #e9eef5;
+    color: #243447;
+    border-color: #d6dee9;
+}}
+.badge-warning {{
+    background: #fff4db;
+    color: #9a6700;
+    border-color: #f0d58a;
+}}
+
+.class-phishing {{
+    background: #dbeafe;
+    color: #0f3e8a;
+    border-color: #a9c7f7;
+}}
+.class-impersonation {{
+    background: #fde2e2;
+    color: #8b1e2d;
+    border-color: #f2b0b5;
+}}
+.class-malicious-attachment {{
+    background: #ede9fe;
+    color: #5b21b6;
+    border-color: #c9b7ff;
+}}
+.class-bec {{
+    background: #ffe8cc;
+    color: #a34a00;
+    border-color: #f4c38b;
+}}
+.class-credential {{
+    background: #dcfce7;
+    color: #166534;
+    border-color: #a8e3bc;
+}}
+.class-empty {{
+    background: #f1f5f9;
+    color: #475569;
+    border-color: #d8e0ea;
+}}
+.class-generic {{
+    background: #eef2ff;
+    color: #3730a3;
+    border-color: #c7d2fe;
+}}
+
+.warning-banner {{
+    margin: 0 16px 16px 16px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #fff1f2;
+    border: 1px solid #fecdd3;
+    color: #9f1239;
+    font-weight: bold;
+}}
+
+.mono {{
+    font-family: Consolas, Menlo, Monaco, monospace;
+    font-size: 0.93rem;
+}}
+
+.muted {{
+    color: var(--muted);
+}}
+
+.methodology {{
+    color: var(--muted);
+    font-size: 0.95rem;
+}}
+
+.score-inline {{
+    margin-left: 6px;
+    color: var(--muted);
+    font-size: 0.9rem;
+}}
+
+.footer-note {{
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-top: 10px;
+}}
+
+@media (max-width: 900px) {{
+    details.cluster-details summary {{
+        flex-direction: column;
+    }}
+    .summary-badges {{
+        justify-content: flex-start;
+    }}
+}}
 </style>
 </head>
 <body>
+<div class="page">
 
-<h1>Phishing Campaign Report</h1>
-<p>Generated: {h(ts)}</p>
+    <div class="hero">
+        <h1>Phishing Campaign Report</h1>
+        <div class="hero-meta">Generated: {h(ts)}</div>
+        <div class="hero-meta">Input: positional CSV parsing (col1=subject, col2=sender, col3=IP, col4=classification)</div>
 
-<h2>Summary</h2>
-<ul>
-<li>Total emails analyzed: {len(emails)}</li>
-<li>Campaigns (>={args.min_campaign_size} emails): {len(campaign_results)}</li>
-<li>Suspicious pairs (2 emails): {len(pair_results)}</li>
-<li>Singleton emails: {len(singletons)}</li>
-</ul>
+        <div class="nav-links">
+            <a href="#summary">Summary</a>
+            <a href="#top-trends">Top Trends</a>
+            <a href="#campaign-summary">Campaign Summary</a>
+            <a href="#campaign-details">Campaign Details</a>
+            <a href="#pairs-details">Suspicious Pairs</a>
+            <a href="#singletons-details">Singletons</a>
+            <a href="#methodology">Methodology</a>
+        </div>
+    </div>
 
-<h2>Campaigns</h2>
-<table>
-<tr>
-<th>ID</th>
-<th>Confidence</th>
-<th>Emails</th>
-<th>Unique Senders</th>
-<th>Unique Domains</th>
-<th>Unique IPs</th>
-<th>Classification</th>
-<th>Class Consistency</th>
-<th>Subject</th>
-</tr>
-"""
+    <div id="summary" class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-label">Total Emails Analyzed</div>
+            <div class="summary-value">{len(emails)}</div>
+            <div class="summary-sub">All rows successfully parsed from the CSV input.</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Campaigns</div>
+            <div class="summary-value">{len(campaign_results)}</div>
+            <div class="summary-sub">Clusters with at least {args.min_campaign_size} emails.</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Suspicious Pairs</div>
+            <div class="summary-value">{len(pair_results)}</div>
+            <div class="summary-sub">Two-email clusters kept separate from campaigns.</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Singletons</div>
+            <div class="summary-value">{len(singletons)}</div>
+            <div class="summary-sub">Isolated emails not linked to other activity.</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Most Common Classification</div>
+            <div class="summary-value" style="font-size:1.2rem;">
+                <span class="badge {classification_css_class(most_common_classification)}">{h(most_common_classification)}</span>
+            </div>
+            <div class="summary-sub">Most frequent analyst classification across all emails.</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Largest Campaign Size</div>
+            <div class="summary-value">{largest_campaign_size}</div>
+            <div class="summary-sub">Largest cluster classified as a campaign.</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Mixed-Classification Campaigns</div>
+            <div class="summary-value">{mixed_campaigns_count}</div>
+            <div class="summary-sub">Campaigns containing more than one analyst classification.</div>
+        </div>
+    </div>
 
-    for c in campaign_results:
-        html_report += f"""
-<tr>
-<td>{h(c['cluster_id'])}</td>
-<td class="{h(conf_class(c['confidence']))}">{h(c['confidence'])}</td>
-<td>{c['email_count']}</td>
-<td>{c['unique_senders']}</td>
-<td>{c['unique_domains']}</td>
-<td>{c['unique_ips']}</td>
-<td>{h(c['campaign_classification'])}</td>
-<td>{h(c['classification_consistency'])}</td>
-<td>{h(c['subject_sample'])}</td>
-</tr>
-"""
-        if c["unique_classifications"] > 1:
-            html_report += f"""
-<tr>
-<td colspan="9" class="warning">Warning: Mixed analyst classifications inside cluster</td>
-</tr>
-"""
+    <div id="top-trends" class="section-card">
+        <h2>Top Trends</h2>
+        <div class="trends-grid">
+            <div class="trend-card">
+                <h3>Top Classifications</h3>
+                {render_counter_list(top_classifications)}
+            </div>
+            <div class="trend-card">
+                <h3>Top Sender Domains</h3>
+                {render_counter_list(top_domains)}
+            </div>
+            <div class="trend-card">
+                <h3>Top Sender IPs</h3>
+                {render_counter_list(top_ips)}
+            </div>
+        </div>
+    </div>
 
-    html_report += "</table>"
+    <div id="campaign-summary" class="section-card">
+        <h2>Campaign Summary</h2>
+        <div class="search-wrap">
+            <input type="text" class="search-input" id="reportSearch"
+                   placeholder="Filter report by campaign ID, subject, classification, domain, or singleton details...">
+        </div>
+        <div class="table-wrap">
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>Confidence</th>
+                    <th>Emails</th>
+                    <th>Unique Senders</th>
+                    <th>Unique Domains</th>
+                    <th>Unique IPs</th>
+                    <th>Classification</th>
+                    <th>Class Consistency</th>
+                    <th>Warnings</th>
+                    <th>Subject</th>
+                </tr>
+                {"".join(campaign_rows) if campaign_rows else '<tr><td colspan="10" class="muted">No campaigns found.</td></tr>'}
+            </table>
+        </div>
+    </div>
 
-    if pair_results:
-        html_report += """
-<h2>Suspicious Pairs (2 emails)</h2>
-<table>
-<tr>
-<th>ID</th>
-<th>Confidence</th>
-<th>Emails</th>
-<th>Unique Senders</th>
-<th>Unique Domains</th>
-<th>Unique IPs</th>
-<th>Classification</th>
-<th>Class Consistency</th>
-<th>Subject</th>
-</tr>
-"""
-        for c in pair_results:
-            html_report += f"""
-<tr>
-<td>{h(c['cluster_id'])}</td>
-<td class="{h(conf_class(c['confidence']))}">{h(c['confidence'])}</td>
-<td>{c['email_count']}</td>
-<td>{c['unique_senders']}</td>
-<td>{c['unique_domains']}</td>
-<td>{c['unique_ips']}</td>
-<td>{h(c['campaign_classification'])}</td>
-<td>{h(c['classification_consistency'])}</td>
-<td>{h(c['subject_sample'])}</td>
-</tr>
-"""
-            if c["unique_classifications"] > 1:
-                html_report += """
-<tr>
-<td colspan="9" class="warning">Warning: Mixed analyst classifications inside cluster</td>
-</tr>
-"""
-        html_report += "</table>"
+    <div id="campaign-details">
+        {render_cluster_details(campaign_results, "Campaign Details", "campaign")}
+    </div>
 
-    if singletons:
-        html_report += """
-<h2>Singleton Emails (isolated activity)</h2>
-<table>
-<tr><th>Row</th><th>Subject</th><th>Sender</th><th>Domain</th><th>IP</th><th>Classification</th><th>Score</th></tr>
-"""
-        for e in singletons:
-            html_report += f"""
-<tr>
-<td>{e['row_num']}</td>
-<td>{h(e['raw_subject'])}</td>
-<td>{h(e['sender'] or '[empty]')}</td>
-<td>{h(e['sender_domain'] or '[empty]')}</td>
-<td>{h(e['ip'] or '[empty]')}</td>
-<td>{h(e['classification'] or '[empty]')}</td>
-<td>{h(f"{e['signal_score']} ({e['signal_confidence']})")}</td>
-</tr>
-"""
-        html_report += "</table>"
+    <div id="pairs-details">
+        {render_cluster_details(pair_results, "Suspicious Pairs", "pair")}
+    </div>
 
-    html_report += "</body></html>"
+    <div id="singletons-details" class="section-card">
+        <h2>Singleton Emails</h2>
+        <div class="table-wrap">
+            <table>
+                <tr>
+                    <th>Row</th>
+                    <th>Subject</th>
+                    <th>Sender</th>
+                    <th>Domain</th>
+                    <th>IP</th>
+                    <th>Classification</th>
+                    <th>Signal</th>
+                </tr>
+                {"".join(singleton_rows) if singleton_rows else '<tr><td colspan="7" class="muted">No singleton emails.</td></tr>'}
+            </table>
+        </div>
+    </div>
+
+    <div id="methodology" class="section-card">
+        <h2>Methodology</h2>
+        <div class="methodology">
+            <p>This report clusters emails into probable campaigns using graph-based connected components built from pairwise similarity checks.</p>
+            <p>Linking logic uses normalized subject similarity as the primary signal, with sender or sender-domain corroboration for medium-confidence links and IP support only for very strong subject similarity.</p>
+            <p>Campaign classification is not used to create links. It is treated as analyst-validated metadata for campaign summarization, consistency checks, and reporting.</p>
+            <p>Thresholds currently in use: strong subject similarity = {SUBJECT_SIM_STRONG}, medium similarity = {SUBJECT_SIM_MEDIUM}, minimum subject length = {MIN_SUBJECT_LEN}, minimum campaign size = {args.min_campaign_size}.</p>
+            <div class="footer-note">
+                Interpretation note: this output represents probable campaign grouping for reporting and analysis, not definitive attribution.
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+(function() {{
+    const input = document.getElementById("reportSearch");
+    if (!input) return;
+
+    input.addEventListener("input", function() {{
+        const q = input.value.toLowerCase().trim();
+        const items = document.querySelectorAll(".searchable-block");
+
+        items.forEach(item => {{
+            const hay = (item.getAttribute("data-search") || item.textContent || "").toLowerCase();
+            const show = !q || hay.includes(q);
+            item.style.display = show ? "" : "none";
+        }});
+    }});
+}})();
+</script>
+
+</body>
+</html>
+"""
 
     with open(output_html, "w", encoding="utf-8") as f:
         f.write(html_report)
