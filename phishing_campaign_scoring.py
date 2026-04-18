@@ -13,7 +13,7 @@ from datetime import datetime
 Phishing Campaign Scoring Tool
 ==============================
 
-Version   : v1.7.1
+Version   : v1.8
 Status    : Stable
 Date      : 2026-04-18
 
@@ -21,7 +21,8 @@ Purpose:
 --------
 Batch analysis of phishing emails to identify probable phishing campaigns
 using graph-based clustering on normalized subject lines, enriched with
-sender, sender domain, sender IP, and analyst-provided classification.
+sender, sender domain, sender IP, analyst-provided classification, and
+analyst-provided resolution.
 
 CSV format expected:
 --------------------
@@ -30,13 +31,13 @@ The script always parses the CSV by column position:
 - Column 2 = sender address
 - Column 3 = sender IP
 - Column 4 = analyst classification
+- Column 5 = resolution
 
 Header names are ignored.
 
 Example accepted first row:
-- EOC Phish EmailSubject,EOC Email From,EOC Sender IP,Classification
-- EmailSubject,EmailFrom,SenderIP,Classification
-- 1,2,3,4
+- Subject,Sender,SenderIP,Classification,Resolution
+- 1,2,3,4,5
 """
 
 # =========================
@@ -51,7 +52,8 @@ parser = argparse.ArgumentParser(
         "  Column 1 = subject\n"
         "  Column 2 = sender address\n"
         "  Column 3 = sender IP\n"
-        "  Column 4 = analyst classification\n\n"
+        "  Column 4 = analyst classification\n"
+        "  Column 5 = resolution\n\n"
         "  Header names are ignored."
     ),
     formatter_class=argparse.RawTextHelpFormatter
@@ -212,6 +214,17 @@ def classification_css_class(classification):
     }
     return mapping.get(key, "class-generic")
 
+def resolution_css_class(resolution):
+    key = resolution.strip().lower()
+    mapping = {
+        "harmless": "res-harmless",
+        "false positive": "res-fp",
+        "impacted": "res-impacted",
+        "insufficient information": "res-insufficient",
+        "[empty]": "res-empty",
+    }
+    return mapping.get(key, "res-generic")
+
 # =========================
 # Pairwise clustering logic
 # =========================
@@ -278,21 +291,22 @@ try:
             print("\n❌ Error: CSV appears to be empty.")
             sys.exit(1)
 
-        if len(header) < 4:
-            print("\n❌ Error: CSV must contain at least 4 columns.")
+        if len(header) < 5:
+            print("\n❌ Error: CSV must contain at least 5 columns.")
             print("Expected order:")
             print("  column 1 = subject")
             print("  column 2 = sender address")
             print("  column 3 = sender IP")
             print("  column 4 = classification")
+            print("  column 5 = resolution")
             sys.exit(1)
 
         log.info("Using positional CSV parsing")
-        log.info("Column 1 -> subject | Column 2 -> sender | Column 3 -> ip | Column 4 -> classification")
+        log.info("Column 1 -> subject | Column 2 -> sender | Column 3 -> ip | Column 4 -> classification | Column 5 -> resolution")
         log.debug("Detected header row (ignored for mapping): %s", header)
 
         for row_num, row in enumerate(reader, start=2):
-            if len(row) < 4:
+            if len(row) < 5:
                 log.debug("Skipping short row %d: %s", row_num, row)
                 continue
 
@@ -300,6 +314,7 @@ try:
             sender = normalize_sender(row[1] or "")
             ip = (row[2] or "").strip()
             classification = (row[3] or "").strip()
+            resolution = (row[4] or "").strip()
             sender_domain = extract_sender_domain(sender)
 
             emails.append({
@@ -309,6 +324,7 @@ try:
                 "sender_domain": sender_domain,
                 "ip": ip,
                 "classification": classification,
+                "resolution": resolution,
                 "row_num": row_num,
             })
 
@@ -405,7 +421,7 @@ for i in range(n):
         component.append(emails[cur])
         stack.extend(adj[cur] - visited)
 
-    component.sort(key=lambda x: (x["sender"], x["raw_subject"], x["ip"], x["classification"]))
+    component.sort(key=lambda x: (x["sender"], x["raw_subject"], x["ip"], x["classification"], x["resolution"]))
     clusters.append(component)
 
 campaigns = [c for c in clusters if len(c) >= args.min_campaign_size]
@@ -428,11 +444,20 @@ def summarize_cluster(cluster, cluster_id):
 
     if class_counter:
         dominant_classification, dominant_count = class_counter.most_common(1)[0]
-        classification_consistency = f"{dominant_count}/{len(cluster)}"
+        classification_consistency = f"{dominant_count}/{len(cluster)} emails"
     else:
         dominant_classification = "[empty]"
-        dominant_count = 0
-        classification_consistency = f"0/{len(cluster)}"
+        classification_consistency = f"0/{len(cluster)} emails"
+
+    resolutions = [e["resolution"] for e in cluster if e["resolution"]]
+    resolution_counter = Counter(resolutions)
+
+    if resolution_counter:
+        dominant_resolution, dominant_resolution_count = resolution_counter.most_common(1)[0]
+        resolution_consistency = f"{dominant_resolution_count}/{len(cluster)} emails"
+    else:
+        dominant_resolution = "[empty]"
+        resolution_consistency = f"0/{len(cluster)} emails"
 
     subject_counter = Counter(e["raw_subject"] for e in cluster if e["raw_subject"])
     subject_sample = subject_counter.most_common(1)[0][0] if subject_counter else cluster[0]["raw_subject"]
@@ -450,6 +475,10 @@ def summarize_cluster(cluster, cluster_id):
         "classification_consistency": classification_consistency,
         "unique_classifications": len(class_counter),
         "classification_breakdown": dict(class_counter),
+        "campaign_resolution": dominant_resolution,
+        "resolution_consistency": resolution_consistency,
+        "unique_resolutions": len(resolution_counter),
+        "resolution_breakdown": dict(resolution_counter),
         "emails": cluster,
     }
 
@@ -466,6 +495,9 @@ for idx, c in enumerate(sorted(pairs, key=len, reverse=True), 1):
 classification_counter = Counter(
     e["classification"] for e in emails if e["classification"]
 )
+resolution_counter_all = Counter(
+    e["resolution"] for e in emails if e["resolution"]
+)
 sender_domain_counter = Counter(
     e["sender_domain"] for e in emails if e["sender_domain"]
 )
@@ -474,18 +506,21 @@ ip_counter = Counter(
 )
 
 top_classifications = classification_counter.most_common(TREND_LIMIT)
+top_resolutions = resolution_counter_all.most_common(TREND_LIMIT)
 top_domains = sender_domain_counter.most_common(TREND_LIMIT)
 top_ips = ip_counter.most_common(TREND_LIMIT)
 
 largest_campaign_size = max((c["email_count"] for c in campaign_results), default=0)
 most_common_classification = top_classifications[0][0] if top_classifications else "[empty]"
+most_common_resolution = top_resolutions[0][0] if top_resolutions else "[empty]"
 mixed_campaigns_count = sum(1 for c in campaign_results if c["unique_classifications"] > 1)
+mixed_resolution_campaigns_count = sum(1 for c in campaign_results if c["unique_resolutions"] > 1)
 
 # =========================
 # Console output
 # =========================
 
-print("\n✅ Phishing Campaign Evaluation\n")
+print("\n✅ Phishing Campaign Evaluation (30-day snapshot)\n")
 print(f"Total emails analyzed         : {len(emails)}")
 print(f"Campaigns (>={args.min_campaign_size} emails)      : {len(campaign_results)}")
 print(f"Suspicious pairs (2 emails)   : {len(pair_results)}")
@@ -505,20 +540,26 @@ if campaign_results:
         print(f"  Classification        : {c['campaign_classification']}")
         print(f"  Class consistency     : {c['classification_consistency']}")
         print(f"  Unique classifications: {c['unique_classifications']}")
+        print(f"  Resolution            : {c['campaign_resolution']}")
+        print(f"  Resolution consistency: {c['resolution_consistency']}")
+        print(f"  Unique resolutions    : {c['unique_resolutions']}")
         if c["unique_classifications"] > 1:
             print("  Warning               : Mixed analyst classifications inside cluster")
+        if c["unique_resolutions"] > 1:
+            print("  Warning               : Mixed analyst resolutions inside cluster")
         print()
 
         if not args.summary_only:
             print("  Emails in this campaign:")
             for e in c["emails"]:
-                print(f"    - Row     : {e['row_num']}")
-                print(f"      Subject : {e['raw_subject']}")
-                print(f"      Sender  : {e['sender'] or '[empty]'}")
-                print(f"      Domain  : {e['sender_domain'] or '[empty]'}")
-                print(f"      IP      : {e['ip'] or '[empty]'}")
-                print(f"      Class   : {e['classification'] or '[empty]'}")
-                print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
+                print(f"    - Row       : {e['row_num']}")
+                print(f"      Subject   : {e['raw_subject']}")
+                print(f"      Sender    : {e['sender'] or '[empty]'}")
+                print(f"      Domain    : {e['sender_domain'] or '[empty]'}")
+                print(f"      IP        : {e['ip'] or '[empty]'}")
+                print(f"      Class     : {e['classification'] or '[empty]'}")
+                print(f"      Resolution: {e['resolution'] or '[empty]'}")
+                print(f"      Score     : {e['signal_score']} ({e['signal_confidence']})\n")
 
 if args.include_pairs and pair_results:
     print("\n=== Suspicious Pairs (2 emails) ===\n")
@@ -534,32 +575,39 @@ if args.include_pairs and pair_results:
         print(f"  Classification        : {c['campaign_classification']}")
         print(f"  Class consistency     : {c['classification_consistency']}")
         print(f"  Unique classifications: {c['unique_classifications']}")
+        print(f"  Resolution            : {c['campaign_resolution']}")
+        print(f"  Resolution consistency: {c['resolution_consistency']}")
+        print(f"  Unique resolutions    : {c['unique_resolutions']}")
         if c["unique_classifications"] > 1:
             print("  Warning               : Mixed analyst classifications inside cluster")
+        if c["unique_resolutions"] > 1:
+            print("  Warning               : Mixed analyst resolutions inside cluster")
         print()
 
         if not args.summary_only:
             print("  Emails in this pair:")
             for e in c["emails"]:
-                print(f"    - Row     : {e['row_num']}")
-                print(f"      Subject : {e['raw_subject']}")
-                print(f"      Sender  : {e['sender'] or '[empty]'}")
-                print(f"      Domain  : {e['sender_domain'] or '[empty]'}")
-                print(f"      IP      : {e['ip'] or '[empty]'}")
-                print(f"      Class   : {e['classification'] or '[empty]'}")
-                print(f"      Score   : {e['signal_score']} ({e['signal_confidence']})\n")
+                print(f"    - Row       : {e['row_num']}")
+                print(f"      Subject   : {e['raw_subject']}")
+                print(f"      Sender    : {e['sender'] or '[empty]'}")
+                print(f"      Domain    : {e['sender_domain'] or '[empty]'}")
+                print(f"      IP        : {e['ip'] or '[empty]'}")
+                print(f"      Class     : {e['classification'] or '[empty]'}")
+                print(f"      Resolution: {e['resolution'] or '[empty]'}")
+                print(f"      Score     : {e['signal_score']} ({e['signal_confidence']})\n")
 
 if args.include_singletons and singletons:
     print("\n=== Singleton Emails (isolated activity) ===\n")
     for idx, e in enumerate(singletons, 1):
         print(f"S{idx:03}")
-        print(f"  Row     : {e['row_num']}")
-        print(f"  Subject : {e['raw_subject']}")
-        print(f"  Sender  : {e['sender'] or '[empty]'}")
-        print(f"  Domain  : {e['sender_domain'] or '[empty]'}")
-        print(f"  IP      : {e['ip'] or '[empty]'}")
-        print(f"  Class   : {e['classification'] or '[empty]'}")
-        print(f"  Score   : {e['signal_score']} ({e['signal_confidence']})\n")
+        print(f"  Row       : {e['row_num']}")
+        print(f"  Subject   : {e['raw_subject']}")
+        print(f"  Sender    : {e['sender'] or '[empty]'}")
+        print(f"  Domain    : {e['sender_domain'] or '[empty]'}")
+        print(f"  IP        : {e['ip'] or '[empty]'}")
+        print(f"  Class     : {e['classification'] or '[empty]'}")
+        print(f"  Resolution: {e['resolution'] or '[empty]'}")
+        print(f"  Score     : {e['signal_score']} ({e['signal_confidence']})\n")
 
 # =========================
 # HTML helpers
@@ -580,13 +628,14 @@ def render_counter_list(items):
         )
     return "\n".join(rows)
 
-def render_breakdown_badges(counter_dict):
+def render_breakdown_badges(counter_dict, kind="classification"):
     if not counter_dict:
         return '<span class="badge badge-neutral">[empty]</span>'
     parts = []
     for label, count in sorted(counter_dict.items(), key=lambda x: (-x[1], x[0].lower())):
+        badge_class = classification_css_class(label) if kind == "classification" else resolution_css_class(label)
         parts.append(
-            f'<span class="badge {classification_css_class(label)}">{h(label)}: {count}</span>'
+            f'<span class="badge {badge_class}">{h(label)}: {count}</span>'
         )
     return " ".join(parts)
 
@@ -623,17 +672,18 @@ def render_mini_stat_bars(cluster):
     </div>
     """
 
-def render_breakdown_table(counter_dict):
+def render_breakdown_table(counter_dict, kind="classification"):
     if not counter_dict:
-        return '<div class="muted">No classification breakdown available.</div>'
+        return '<div class="muted">No breakdown available.</div>'
 
     total = sum(counter_dict.values()) or 1
     rows = []
     for label, count in sorted(counter_dict.items(), key=lambda x: (-x[1], x[0].lower())):
         pct = round((count / total) * 100, 1)
+        badge_class = classification_css_class(label) if kind == "classification" else resolution_css_class(label)
         rows.append(f"""
         <tr>
-            <td><span class="badge {classification_css_class(label)}">{h(label)}</span></td>
+            <td><span class="badge {badge_class}">{h(label)}</span></td>
             <td>{count}</td>
             <td>{pct}%</td>
         </tr>
@@ -642,7 +692,7 @@ def render_breakdown_table(counter_dict):
     <div class="table-wrap">
         <table class="sortable">
             <tr>
-                <th>Classification</th>
+                <th>{'Classification' if kind == 'classification' else 'Resolution'}</th>
                 <th>Count</th>
                 <th>Percent</th>
             </tr>
@@ -662,6 +712,7 @@ def render_email_table(cluster_emails):
             <td class="mono">{h(e['sender_domain'] or '[empty]')}</td>
             <td class="mono">{h(e['ip'] or '[empty]')}</td>
             <td><span class="badge {classification_css_class(e['classification'] or '[empty]')}">{h(e['classification'] or '[empty]')}</span></td>
+            <td><span class="badge {resolution_css_class(e['resolution'] or '[empty]')}">{h(e['resolution'] or '[empty]')}</span></td>
             <td><span class="badge {confidence_css_class(e['signal_confidence'])}">{h(e['signal_confidence'])}</span> <span class="score-inline">{e['signal_score']}</span></td>
         </tr>
         """)
@@ -673,14 +724,18 @@ def render_cluster_details(clusters, title, prefix):
 
     blocks = [f'<div class="section-card"><h2 id="{slugify(title)}">{h(title)}</h2>']
     for cluster in clusters:
-        mixed_warning = ""
+        mixed_class_warning = ""
+        mixed_resolution_warning = ""
+
         if cluster["unique_classifications"] > 1:
-            mixed_warning = '<div class="warning-banner">Mixed analyst classifications inside cluster</div>'
+            mixed_class_warning = '<div class="warning-banner">Mixed analyst classifications inside cluster</div>'
+        if cluster["unique_resolutions"] > 1:
+            mixed_resolution_warning = '<div class="warning-banner">Mixed analyst resolutions inside cluster</div>'
 
         details_id = f"{prefix}-{cluster['cluster_id']}"
         blocks.append(f"""
         <details class="cluster-details searchable-block" id="{details_id}"
-                 data-search="{h(cluster['cluster_id'])} {h(cluster['subject_sample'])} {h(cluster['campaign_classification'])}">
+                 data-search="{h(cluster['cluster_id'])} {h(cluster['subject_sample'])} {h(cluster['campaign_classification'])} {h(cluster['campaign_resolution'])}">
             <summary>
                 <div class="summary-main">
                     <span class="cluster-id">{h(cluster['cluster_id'])}</span>
@@ -689,6 +744,7 @@ def render_cluster_details(clusters, title, prefix):
                 <div class="summary-badges">
                     <span class="badge {confidence_css_class(cluster['confidence'])}">{h(cluster['confidence'])}</span>
                     <span class="badge {classification_css_class(cluster['campaign_classification'])}">{h(cluster['campaign_classification'])}</span>
+                    <span class="badge {resolution_css_class(cluster['campaign_resolution'])}">{h(cluster['campaign_resolution'])}</span>
                     <span class="badge badge-neutral">{cluster['email_count']} emails</span>
                 </div>
             </summary>
@@ -700,11 +756,17 @@ def render_cluster_details(clusters, title, prefix):
                 <div><strong>Unique domains:</strong> {cluster['unique_domains']}</div>
                 <div><strong>Unique IPs:</strong> {cluster['unique_ips']}</div>
                 <div><strong>Class consistency:</strong> {h(cluster['classification_consistency'])}</div>
+                <div><strong>Resolution consistency:</strong> {h(cluster['resolution_consistency'])}</div>
             </div>
 
             <div class="breakdown-block">
                 <div><strong>Classification breakdown:</strong></div>
-                <div class="badge-row">{render_breakdown_badges(cluster['classification_breakdown'])}</div>
+                <div class="badge-row">{render_breakdown_badges(cluster['classification_breakdown'], kind='classification')}</div>
+            </div>
+
+            <div class="breakdown-block">
+                <div><strong>Resolution breakdown:</strong></div>
+                <div class="badge-row">{render_breakdown_badges(cluster['resolution_breakdown'], kind='resolution')}</div>
             </div>
 
             <div class="breakdown-block">
@@ -714,10 +776,16 @@ def render_cluster_details(clusters, title, prefix):
 
             <div class="breakdown-block">
                 <div><strong>Detailed classification breakdown:</strong></div>
-                {render_breakdown_table(cluster['classification_breakdown'])}
+                {render_breakdown_table(cluster['classification_breakdown'], kind='classification')}
             </div>
 
-            {mixed_warning}
+            <div class="breakdown-block">
+                <div><strong>Detailed resolution breakdown:</strong></div>
+                {render_breakdown_table(cluster['resolution_breakdown'], kind='resolution')}
+            </div>
+
+            {mixed_class_warning}
+            {mixed_resolution_warning}
 
             <div class="table-wrap">
                 <table class="sortable">
@@ -728,6 +796,7 @@ def render_cluster_details(clusters, title, prefix):
                         <th>Domain</th>
                         <th>IP</th>
                         <th>Classification</th>
+                        <th>Resolution</th>
                         <th>Signal</th>
                     </tr>
                     {render_email_table(cluster['emails'])}
@@ -748,13 +817,16 @@ if args.export_html:
 
     campaign_rows = []
     for c in campaign_results:
-        warning = ""
+        warnings = []
         if c["unique_classifications"] > 1:
-            warning = '<span class="badge badge-warning">Mixed classes</span>'
+            warnings.append('<span class="badge badge-warning">Mixed classes</span>')
+        if c["unique_resolutions"] > 1:
+            warnings.append('<span class="badge badge-warning">Mixed resolutions</span>')
+        warning_html = " ".join(warnings)
 
         campaign_rows.append(f"""
         <tr class="searchable-block"
-            data-search="{h(c['cluster_id'])} {h(c['subject_sample'])} {h(c['campaign_classification'])}">
+            data-search="{h(c['cluster_id'])} {h(c['subject_sample'])} {h(c['campaign_classification'])} {h(c['campaign_resolution'])}">
             <td><a href="#campaign-{h(c['cluster_id'])}">{h(c['cluster_id'])}</a></td>
             <td><span class="badge {confidence_css_class(c['confidence'])}">{h(c['confidence'])}</span></td>
             <td>{c['email_count']}</td>
@@ -763,20 +835,25 @@ if args.export_html:
             <td>{c['unique_ips']}</td>
             <td><span class="badge {classification_css_class(c['campaign_classification'])}">{h(c['campaign_classification'])}</span></td>
             <td>{h(c['classification_consistency'])}</td>
-            <td>{warning}</td>
+            <td><span class="badge {resolution_css_class(c['campaign_resolution'])}">{h(c['campaign_resolution'])}</span></td>
+            <td>{h(c['resolution_consistency'])}</td>
+            <td>{warning_html}</td>
             <td>{h(c['subject_sample'])}</td>
         </tr>
         """)
 
     pairs_rows = []
     for c in pair_results:
-        warning = ""
+        warnings = []
         if c["unique_classifications"] > 1:
-            warning = '<span class="badge badge-warning">Mixed classes</span>'
+            warnings.append('<span class="badge badge-warning">Mixed classes</span>')
+        if c["unique_resolutions"] > 1:
+            warnings.append('<span class="badge badge-warning">Mixed resolutions</span>')
+        warning_html = " ".join(warnings)
 
         pairs_rows.append(f"""
         <tr class="searchable-block"
-            data-search="{h(c['cluster_id'])} {h(c['subject_sample'])} {h(c['campaign_classification'])}">
+            data-search="{h(c['cluster_id'])} {h(c['subject_sample'])} {h(c['campaign_classification'])} {h(c['campaign_resolution'])}">
             <td><a href="#pair-{h(c['cluster_id'])}">{h(c['cluster_id'])}</a></td>
             <td><span class="badge {confidence_css_class(c['confidence'])}">{h(c['confidence'])}</span></td>
             <td>{c['email_count']}</td>
@@ -785,7 +862,9 @@ if args.export_html:
             <td>{c['unique_ips']}</td>
             <td><span class="badge {classification_css_class(c['campaign_classification'])}">{h(c['campaign_classification'])}</span></td>
             <td>{h(c['classification_consistency'])}</td>
-            <td>{warning}</td>
+            <td><span class="badge {resolution_css_class(c['campaign_resolution'])}">{h(c['campaign_resolution'])}</span></td>
+            <td>{h(c['resolution_consistency'])}</td>
+            <td>{warning_html}</td>
             <td>{h(c['subject_sample'])}</td>
         </tr>
         """)
@@ -794,13 +873,14 @@ if args.export_html:
     for e in singletons:
         singleton_rows.append(f"""
         <tr class="searchable-block"
-            data-search="{h(e['raw_subject'])} {h(e['classification'])} {h(e['sender_domain'])}">
+            data-search="{h(e['raw_subject'])} {h(e['classification'])} {h(e['resolution'])} {h(e['sender_domain'])}">
             <td>{e['row_num']}</td>
             <td>{h(e['raw_subject'])}</td>
             <td class="mono">{h(e['sender'] or '[empty]')}</td>
             <td class="mono">{h(e['sender_domain'] or '[empty]')}</td>
             <td class="mono">{h(e['ip'] or '[empty]')}</td>
             <td><span class="badge {classification_css_class(e['classification'] or '[empty]')}">{h(e['classification'] or '[empty]')}</span></td>
+            <td><span class="badge {resolution_css_class(e['resolution'] or '[empty]')}">{h(e['resolution'] or '[empty]')}</span></td>
             <td><span class="badge {confidence_css_class(e['signal_confidence'])}">{h(e['signal_confidence'])}</span> <span class="score-inline">{e['signal_score']}</span></td>
         </tr>
         """)
@@ -815,6 +895,22 @@ if args.export_html:
                 <td>{h(c['cluster_id'])}</td>
                 <td>{"campaign" if c['cluster_id'].startswith('C') else "pair"}</td>
                 <td><span class="badge {classification_css_class(label)}">{h(label)}</span></td>
+                <td>{count}</td>
+                <td>{pct}%</td>
+                <td>{h(c['subject_sample'])}</td>
+            </tr>
+            """)
+
+    resolution_matrix_rows = []
+    for c in campaign_results + pair_results:
+        for label, count in sorted(c["resolution_breakdown"].items(), key=lambda x: (-x[1], x[0].lower())):
+            total = sum(c["resolution_breakdown"].values()) or 1
+            pct = round((count / total) * 100, 1)
+            resolution_matrix_rows.append(f"""
+            <tr>
+                <td>{h(c['cluster_id'])}</td>
+                <td>{"campaign" if c['cluster_id'].startswith('C') else "pair"}</td>
+                <td><span class="badge {resolution_css_class(label)}">{h(label)}</span></td>
                 <td>{count}</td>
                 <td>{pct}%</td>
                 <td>{h(c['subject_sample'])}</td>
@@ -1208,6 +1304,37 @@ details.cluster-details summary::-webkit-details-marker {{
     border-color: #c7d2fe;
 }}
 
+.res-harmless {{
+    background: #dcfce7;
+    color: #166534;
+    border-color: #a8e3bc;
+}}
+.res-fp {{
+    background: #e0f2fe;
+    color: #075985;
+    border-color: #bae6fd;
+}}
+.res-impacted {{
+    background: #fee2e2;
+    color: #991b1b;
+    border-color: #fecaca;
+}}
+.res-insufficient {{
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fcd34d;
+}}
+.res-empty {{
+    background: #f1f5f9;
+    color: #475569;
+    border-color: #d8e0ea;
+}}
+.res-generic {{
+    background: #f3e8ff;
+    color: #6b21a8;
+    border-color: #e9d5ff;
+}}
+
 .warning-banner {{
     margin: 0 16px 16px 16px;
     padding: 10px 12px;
@@ -1310,7 +1437,7 @@ details.cluster-details summary::-webkit-details-marker {{
     <div class="hero">
         <h1>Phishing Campaign Report</h1>
         <div class="hero-meta">Generated: {h(ts)}</div>
-        <div class="hero-meta">Input: positional CSV parsing (col1=subject, col2=sender, col3=IP, col4=classification)</div>
+        <div class="hero-meta">Input: positional CSV parsing (col1=subject, col2=sender, col3=IP, col4=classification, col5=resolution)</div>
 
         <div class="nav-links">
             <a href="#summary">Summary</a>
@@ -1320,6 +1447,7 @@ details.cluster-details summary::-webkit-details-marker {{
             <a href="#pairs-details">Suspicious Pairs</a>
             <a href="#singletons-details">Singletons</a>
             <a href="#classification-matrix">Classification Matrix</a>
+            <a href="#resolution-matrix">Resolution Matrix</a>
             <a href="#methodology">Methodology</a>
             <button type="button" id="themeToggle" class="theme-toggle">Toggle dark mode</button>
         </div>
@@ -1354,6 +1482,13 @@ details.cluster-details summary::-webkit-details-marker {{
             <div class="summary-sub">Most frequent analyst classification across all emails.</div>
         </div>
         <div class="summary-card">
+            <div class="summary-label">Most Common Resolution</div>
+            <div class="summary-value" style="font-size:1.2rem;">
+                <span class="badge {resolution_css_class(most_common_resolution)}">{h(most_common_resolution)}</span>
+            </div>
+            <div class="summary-sub">Most frequent analyst resolution across all emails.</div>
+        </div>
+        <div class="summary-card">
             <div class="summary-label">Largest Campaign Size</div>
             <div class="summary-value">{largest_campaign_size}</div>
             <div class="summary-sub">Largest cluster classified as a campaign.</div>
@@ -1363,6 +1498,11 @@ details.cluster-details summary::-webkit-details-marker {{
             <div class="summary-value">{mixed_campaigns_count}</div>
             <div class="summary-sub">Campaigns containing more than one analyst classification.</div>
         </div>
+        <div class="summary-card">
+            <div class="summary-label">Mixed-Resolution Campaigns</div>
+            <div class="summary-value">{mixed_resolution_campaigns_count}</div>
+            <div class="summary-sub">Campaigns containing more than one analyst resolution.</div>
+        </div>
     </div>
 
     <div id="top-trends" class="section-card">
@@ -1371,6 +1511,10 @@ details.cluster-details summary::-webkit-details-marker {{
             <div class="trend-card">
                 <h3>Top Classifications</h3>
                 {render_counter_list(top_classifications)}
+            </div>
+            <div class="trend-card">
+                <h3>Top Resolutions</h3>
+                {render_counter_list(top_resolutions)}
             </div>
             <div class="trend-card">
                 <h3>Top Sender Domains</h3>
@@ -1387,7 +1531,7 @@ details.cluster-details summary::-webkit-details-marker {{
         <h2>Campaign Summary</h2>
         <div class="search-wrap">
             <input type="text" class="search-input" id="reportSearch"
-                   placeholder="Filter report by campaign ID, subject, classification, domain, or singleton details...">
+                   placeholder="Filter report by campaign ID, subject, classification, resolution, domain, or singleton details...">
         </div>
         <div class="table-wrap">
             <table class="sortable">
@@ -1400,10 +1544,12 @@ details.cluster-details summary::-webkit-details-marker {{
                     <th>Unique IPs</th>
                     <th>Classification</th>
                     <th>Class Consistency</th>
+                    <th>Resolution</th>
+                    <th>Resolution Consistency</th>
                     <th>Warnings</th>
                     <th>Subject</th>
                 </tr>
-                {"".join(campaign_rows) if campaign_rows else '<tr><td colspan="10" class="muted">No campaigns found.</td></tr>'}
+                {"".join(campaign_rows) if campaign_rows else '<tr><td colspan="12" class="muted">No campaigns found.</td></tr>'}
             </table>
         </div>
     </div>
@@ -1425,10 +1571,12 @@ details.cluster-details summary::-webkit-details-marker {{
                     <th>Unique IPs</th>
                     <th>Classification</th>
                     <th>Class Consistency</th>
+                    <th>Resolution</th>
+                    <th>Resolution Consistency</th>
                     <th>Warnings</th>
                     <th>Subject</th>
                 </tr>
-                {"".join(pairs_rows) if pairs_rows else '<tr><td colspan="10" class="muted">No suspicious pairs found.</td></tr>'}
+                {"".join(pairs_rows) if pairs_rows else '<tr><td colspan="12" class="muted">No suspicious pairs found.</td></tr>'}
             </table>
         </div>
     </div>
@@ -1448,9 +1596,10 @@ details.cluster-details summary::-webkit-details-marker {{
                     <th>Domain</th>
                     <th>IP</th>
                     <th>Classification</th>
+                    <th>Resolution</th>
                     <th>Signal</th>
                 </tr>
-                {"".join(singleton_rows) if singleton_rows else '<tr><td colspan="7" class="muted">No singleton emails.</td></tr>'}
+                {"".join(singleton_rows) if singleton_rows else '<tr><td colspan="8" class="muted">No singleton emails.</td></tr>'}
             </table>
         </div>
     </div>
@@ -1472,12 +1621,29 @@ details.cluster-details summary::-webkit-details-marker {{
         </div>
     </div>
 
+    <div id="resolution-matrix" class="section-card">
+        <h2>Detailed Resolution Breakdown Matrix</h2>
+        <div class="table-wrap">
+            <table class="sortable">
+                <tr>
+                    <th>Cluster ID</th>
+                    <th>Type</th>
+                    <th>Resolution</th>
+                    <th>Count</th>
+                    <th>Percent</th>
+                    <th>Subject</th>
+                </tr>
+                {"".join(resolution_matrix_rows) if resolution_matrix_rows else '<tr><td colspan="6" class="muted">No resolution breakdown data.</td></tr>'}
+            </table>
+        </div>
+    </div>
+
     <div id="methodology" class="section-card">
         <h2>Methodology</h2>
         <div class="methodology">
             <p>This report clusters emails into probable campaigns using graph-based connected components built from pairwise similarity checks.</p>
             <p>Linking logic uses normalized subject similarity as the primary signal, with sender or sender-domain corroboration for medium-confidence links and IP support only for very strong subject similarity.</p>
-            <p>Campaign classification is not used to create links. It is treated as analyst-validated metadata for campaign summarization, consistency checks, and reporting.</p>
+            <p>Classification and resolution are not used to create links. They are treated as analyst-validated metadata for cluster summarization, consistency checks, and reporting.</p>
             <p>Thresholds currently in use: strong subject similarity = {SUBJECT_SIM_STRONG}, medium similarity = {SUBJECT_SIM_MEDIUM}, minimum subject length = {MIN_SUBJECT_LEN}, minimum campaign size = {args.min_campaign_size}.</p>
             <div class="footer-note">
                 Interpretation note: this output represents probable campaign grouping for reporting and analysis, not definitive attribution.
@@ -1610,6 +1776,10 @@ if args.export_csv:
                 "classification_consistency",
                 "unique_classifications",
                 "classification_breakdown",
+                "campaign_resolution",
+                "resolution_consistency",
+                "unique_resolutions",
+                "resolution_breakdown",
             ]
         )
         writer.writeheader()
@@ -1629,6 +1799,10 @@ if args.export_csv:
                 "classification_consistency": c["classification_consistency"],
                 "unique_classifications": c["unique_classifications"],
                 "classification_breakdown": json.dumps(c["classification_breakdown"], ensure_ascii=False, sort_keys=True),
+                "campaign_resolution": c["campaign_resolution"],
+                "resolution_consistency": c["resolution_consistency"],
+                "unique_resolutions": c["unique_resolutions"],
+                "resolution_breakdown": json.dumps(c["resolution_breakdown"], ensure_ascii=False, sort_keys=True),
             })
 
         for c in pair_results:
@@ -1646,6 +1820,10 @@ if args.export_csv:
                 "classification_consistency": c["classification_consistency"],
                 "unique_classifications": c["unique_classifications"],
                 "classification_breakdown": json.dumps(c["classification_breakdown"], ensure_ascii=False, sort_keys=True),
+                "campaign_resolution": c["campaign_resolution"],
+                "resolution_consistency": c["resolution_consistency"],
+                "unique_resolutions": c["unique_resolutions"],
+                "resolution_breakdown": json.dumps(c["resolution_breakdown"], ensure_ascii=False, sort_keys=True),
             })
 
     print(f"\n✅ Cluster summary exported to {output_file}")
